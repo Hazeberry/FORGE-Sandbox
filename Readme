@@ -1,0 +1,141 @@
+# FORGE · Code Sandbox
+
+> A zero-dependency, single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, loop protection, and AI-powered code analysis.
+
+---
+
+## What is FORGE?
+
+FORGE is a **self-contained code playground** — one HTML file, no build step, no dependencies, no CDN. Open it in any browser and start writing HTML, CSS, and JavaScript with instant live preview.
+
+It was built to be the sandbox you'd actually want to use: fast, honest about what it does, and secure by default.
+
+---
+
+## Features
+
+### Editor
+- **Syntax highlighting** via a character-by-character tokenizer — no regex runs on already-transformed text, no broken nested spans
+- **Line numbers** with color-coded gutter markers for code analysis results
+- **Auto-indent** on Enter, detecting opening brackets
+- **Smart brackets & quotes** — auto-close `{}`, `[]`, `()`, `""`, `''`, ` `` ` with cursor placement; skip over existing closing characters; wrap selections
+- **Multi-line Tab / Shift+Tab** indentation
+- **Ctrl+M** to toggle Tab between indentation and browser navigation
+- **HTML tag autocomplete** — type `</` to auto-close the last open tag
+- **Find & navigate** with match count, Prev/Next buttons, Enter/Shift+Enter, Escape to close
+- **Go to line** — jump to any line number
+
+### Preview & Safety
+- **Live auto-run** with 850ms debounce (toggleable)
+- **Ctrl+Enter** to run manually
+- **Infinite loop protection** on two levels:
+  - *Loop instrumentation* — `while`, `for`, and `do` bodies get an iteration counter injected before each run; throws after 2 million iterations
+  - *Parent-thread watchdog* — monitors iframe heartbeats every 200ms; if the iframe thread freezes for >2s, the parent kills it from outside (the only approach that actually works for a blocked thread)
+  - *Background-tab safe* — watchdog pauses when `document.hidden` to avoid false positives
+- **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock`, no `allow-same-origin` (prevents iframe from accessing parent storage or DOM)
+- **postMessage origin check** — only accepts messages from the preview iframe
+
+### Console
+- Intercepts `console.log/warn/error/info` from the iframe via `postMessage`
+- Catches `window.onerror` and `unhandledrejection`
+- 200-line rolling buffer — no DOM flooding with AutoRun
+- **Clear** button
+
+### AI Code Analysis
+- Click **🔍 Analyse** to send the current code to the Claude API
+- Returns a structured list of issues with line numbers, severity (error / warning / info), message, and fix suggestion
+- Issues appear in the **Analyse tab** — click any entry to jump to that line
+- Gutter markers highlight affected line numbers in red / yellow / blue
+- Markers clear automatically when you edit the code (results are stale)
+- Works without configuration when used via [Claude.ai](https://claude.ai); for standalone use, enter your [Anthropic API key](https://console.anthropic.com) on first use (stored in `localStorage`, never transmitted anywhere else)
+
+### Layout & UX
+- **Split / vertical** layout toggle (⊞ button or swipe on panel headers)
+- **Resizable console** — drag the handle between editor and console
+- **Auto-save** to `localStorage` on every keystroke
+- **AutoRun state** persisted across reloads
+- Toast notifications for actions and errors
+- Responsive — works on mobile (keyboard shortcuts adapt)
+
+---
+
+## Quick Start
+
+**No installation. No build step.**
+
+1. Download [`forge_sandbox_final.html`](forge_sandbox_final.html)
+2. Open it in any modern browser
+3. Start coding
+
+That's it.
+
+For **AI code analysis** without a Claude.ai account, add your Anthropic API key when prompted (or pre-set it in `localStorage` under the key `forge_api_key`).
+
+---
+
+## Browser Support
+
+| Browser | Minimum | Loop Guard | Highlighting |
+|---------|---------|------------|--------------|
+| Chrome  | 80+     | ✅         | ✅           |
+| Firefox | 78+     | ✅         | ✅           |
+| Safari  | 16.4+   | ✅         | ✅           |
+| Edge    | 80+     | ✅         | ✅           |
+
+---
+
+## Architecture Notes
+
+### Why a character-by-character tokenizer?
+
+Earlier versions used sequential regex passes. The problem: pass 2 runs on the output of pass 1, which already contains `<span>` tags. The string regex then matches `"hl-keyword"` inside `class="hl-keyword"`, and the attribute regex wraps `class=` in another span — producing broken, un-parseable HTML.
+
+The tokenizer processes the raw source left-to-right, character by character. Each state (comment, string, tag, tag-attrs, script block, etc.) consumes characters exclusively. No regex ever runs on transformed text. Result: clean, valid HTML output with no false matches.
+
+### Why the loop guard lives in the parent
+
+The obvious approach — inject a Worker inside the iframe that detects a frozen thread — doesn't work. A blocked main thread can't process incoming `postMessage` events, so the Worker's "stop now" message sits in the queue until the loop finishes (i.e., never). The correct fix is to watch from outside: the parent thread monitors heartbeats sent by `requestAnimationFrame` inside the iframe. When they stop, the parent sets `preview.srcdoc = ''`, which terminates the iframe from the outside regardless of what the iframe thread is doing.
+
+### Single file, zero dependencies
+
+FORGE has no `node_modules`, no bundler, no CDN calls (except the optional Google Fonts preconnect in the `<head>`). The entire application — HTML, CSS, JavaScript, syntax highlighter, loop guard, AI analysis — is one file you can inspect, fork, and audit completely.
+
+---
+
+## Roadmap
+
+- [ ] Export code as `.html` / `.js` file
+- [ ] Light theme
+- [ ] Multiple editor tabs
+- [ ] CodeBERT or similar model as a fast first-pass pre-screener before Claude analysis (pending a fine-tuned model with region-level defect detection)
+
+---
+
+## Development
+
+FORGE was built through close collaboration between a human and **Claude** (Anthropic). Architecture decisions, feature planning, and iterative code review were worked through together across many sessions. No code was accepted blindly — every version was analyzed, tested, and refined before inclusion.
+
+The human contribution: product vision, architectural direction, prioritization of what to fix and what to defer, final decisions on every tradeoff.
+
+The AI contribution: implementation, bug detection (including finding its own bugs across versions), and alternative approaches.
+
+This README acknowledges that process honestly. AI-assisted development is increasingly common; what matters is whether the result is correct, understandable, and maintainable. The extensive review history that produced this codebase is evidence of that process.
+
+---
+
+## License
+
+MIT — do whatever you want with it.
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the software, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+```
