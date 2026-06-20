@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FORGE · Code Sandbox</title>
+  <style>
+    :root {
+      --bg:      #0f141c;
+      --panel:   #161c24;
+      --accent:  #00e676;
+      --text:    #e3e8f0;
+      --border:  #252d3a;
+      --err:     #ff5370;
+      --warn:    #ffcb6b;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .toolbar {
+      height: 48px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 8px;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .btn {
+      background: #1e2733;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 5px 11px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:hover { background: #2a3545; }
+    .btn-run {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      border: none;
+    }
+    .btn-run:hover { background: #00b359; }
+    .btn-danger { color: var(--err); }
+    .btn-danger:hover { background: #2a1820; }
+    .toolbar-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+    .auto-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: #6b7a99;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .auto-label input { accent-color: var(--accent); }
+    #findInput, #gotoInput {
+      background: #1e2733;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+    }
+    #findInput { width: 150px; }
+    #findInput:focus, #gotoInput:focus { border-color: var(--accent); }
+    #gotoInput { width: 60px; }
+    #findCount { font-size: 11px; color: #6b7a99; white-space: nowrap; flex-shrink: 0; }
+
+    /* ── WORKSPACE ── */
+    .workspace {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── EDITOR PANEL ── */
+    .col-editor {
+      width: 50%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+    }
+    .panel-header {
+      height: 32px;
+      background: #131920;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #4b5a72;
+      flex-shrink: 0;
+    }
+    .editor-area {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+      min-height: 0;
+    }
+    #lineNums {
+      width: 42px;
+      padding: 14px 8px 14px 4px;
+      font-family: 'Fragment Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      text-align: right;
+      color: #374357;
+      background: #0c1017;
+      user-select: none;
+      white-space: pre;
+      overflow: hidden;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+    }
+    .editor-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #codeEditor, #hlOverlay {
+      position: absolute;
+      inset: 0;
+      padding: 14px 12px;
+      font-family: 'Fragment Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      white-space: pre;
+      overflow: auto;
+      word-wrap: normal;
+    }
+    #codeEditor {
+      background: transparent;
+      color: transparent;
+      caret-color: var(--accent);
+      border: none;
+      resize: none;
+      outline: none;
+      z-index: 2;
+    }
+    #hlOverlay {
+      color: #c8d8f8;
+      pointer-events: none;
+      z-index: 1;
+      background: #0c1017;
+    }
+    .hl-keyword { color: #c792ea; font-weight: 600; }
+    .hl-string  { color: #c3e88d; }
+    .hl-comment { color: #4a5568; font-style: italic; }
+    .hl-number  { color: #f78c6c; }
+    .hl-tag     { color: #ff5370; }
+    .hl-attr    { color: #ffcb6b; }
+    .hl-js      { color: #c8d8f8; }
+
+    /* ── RESIZE HANDLE ── */
+    #resizeHandle {
+      height: 4px;
+      background: var(--border);
+      cursor: row-resize;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    #resizeHandle:hover { background: var(--accent); }
+
+    /* ── CONSOLE ── */
+    .col-right {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #previewPane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #preview {
+      flex: 1;
+      border: none;
+      background: #fff;
+    }
+    #consolePane {
+      height: 180px;
+      background: #090c11;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    #consoleOut {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: 'Fragment Mono', 'Fira Code', monospace;
+      font-size: 11px;
+    }
+    #consoleOut::-webkit-scrollbar { width: 3px; }
+    #consoleOut::-webkit-scrollbar-thumb { background: var(--border); }
+    .log-entry {
+      padding: 2px 0;
+      border-bottom: 1px solid #0f141c;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-log  { color: #7eb8f7; }
+    .log-info { color: #4ecca3; }
+    .log-warn { color: var(--warn); }
+    .log-error{ color: var(--err); }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      background: var(--panel);
+      border-left: 3px solid var(--accent);
+      padding: 8px 14px;
+      font-size: 11px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      z-index: 9999;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    }
+    #toast.show { opacity: 1; }
+    #toast.err { border-left-color: var(--err); }
+
+    /* ── LAYOUT MODES ── */
+    /* FIX: flex:1 1 0 + min-height:0 statt impliziter content-Höhe.
+       Ohne das schrumpft .col-editor im column-flow auf den Inhalt
+       (~48px), weil nur align-items:stretch im row-flow (Desktop)
+       automatisch die volle Höhe gibt. */
+    .workspace.vertical { flex-direction: column; }
+    .workspace.vertical .col-editor {
+      width: 100%;
+      flex: 1 1 0;
+      min-height: 0;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── MOBILE ── */
+    @media (max-width: 640px) {
+      .workspace { flex-direction: column; }
+      .col-editor {
+        width: 100% !important;
+        flex: 3 1 0;
+        min-height: 0;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .col-right { flex: 2 1 0; min-height: 0; }
+      #consolePane { height: 130px; }
+      .toolbar { height: auto; flex-wrap: wrap; padding: 6px 10px; }
+      #findInput { width: 110px; }
+    }
+
+    /* ── KONSOLE / ANALYSE TABS ── */
+    .console-tabs {
+      display: flex;
+      background: #0a0d12;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #4b5a72;
+      padding: 6px 14px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .issue-badge {
+      display: inline-block;
+      background: var(--err);
+      color: #fff;
+      border-radius: 8px;
+      padding: 1px 5px;
+      font-size: 9px;
+      margin-left: 4px;
+      vertical-align: middle;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .issue-badge.visible { opacity: 1; }
+    .issue-badge.ok   { background: var(--accent); color: #000; }
+    .issue-badge.warn { background: var(--warn);   color: #000; }
+
+    /* ── ANALYSE PANEL ── */
+    #analysePanel {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      background: #090c11;
+    }
+    #analysePanel::-webkit-scrollbar { width: 3px; }
+    #analysePanel::-webkit-scrollbar-thumb { background: var(--border); }
+    .diag-entry {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      padding: 7px 12px;
+      border-bottom: 1px solid #0d1117;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .diag-entry:hover { background: #0f141c; }
+    .diag-icon { font-size: 11px; flex-shrink: 0; padding-top: 1px; }
+    .diag-body { flex: 1; min-width: 0; }
+    .diag-loc  { font-size: 10px; color: #4b5a72; margin-bottom: 2px; }
+    .diag-msg  { font-size: 11px; font-family: 'Fragment Mono', monospace; word-break: break-word; }
+    .diag-sug  { font-size: 10px; color: #4b5a72; margin-top: 3px; font-style: italic; }
+    .diag-entry.sev-error   .diag-icon,
+    .diag-entry.sev-error   .diag-msg  { color: var(--err); }
+    .diag-entry.sev-warning .diag-icon,
+    .diag-entry.sev-warning .diag-msg  { color: var(--warn); }
+    .diag-entry.sev-info    .diag-icon { color: #7eb8f7; }
+
+    /* ── GUTTER MARKER ── */
+    .gm-e { color: var(--err)  !important; font-weight: bold; }
+    .gm-w { color: var(--warn) !important; font-weight: bold; }
+    .gm-i { color: #7eb8f7    !important; }
+    #lineNums span { display: block; line-height: 1.65; }
+
+    /* ── API KEY MODAL ── */
+    #apiModal {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    }
+    #apiModal.open { display: flex; }
+    .modal-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 22px 24px;
+      width: 360px;
+      max-width: 92vw;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.7);
+    }
+    .modal-box h3 { font-size: 13px; color: var(--text); margin-bottom: 8px; }
+    .modal-box p  { font-size: 11px; color: #4b5a72; margin-bottom: 14px; line-height: 1.6; }
+    .modal-box input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 4px;
+      font-family: 'Fragment Mono', monospace;
+      font-size: 12px;
+      outline: none;
+      margin-bottom: 14px;
+    }
+    .modal-box input:focus { border-color: var(--accent); }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+    /* ── CONFIRM MODAL (Code löschen) ── */
+    #confirmModal {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    }
+    #confirmModal.open { display: flex; }
+  </style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- ── API KEY MODAL ──────────────────────────────────────────── -->
+<div id="apiModal" role="dialog" aria-modal="true" aria-label="Anthropic API Key">
+  <div class="modal-box">
+    <h3>🔑 Anthropic API Key</h3>
+    <p>Für die Code-Analyse wird die Claude API benötigt.<br>
+       Den Key findest du unter <strong>console.anthropic.com</strong>.<br>
+       Er wird nur lokal gespeichert (localStorage).</p>
+    <input id="apiKeyInput" type="password" placeholder="sk-ant-…" aria-label="API Key eingeben" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn" id="apiKeyCancel">Abbrechen</button>
+      <button class="btn btn-run" id="apiKeySave">Speichern &amp; Analysieren</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CONFIRM MODAL (Code löschen) ──────────────────────────── -->
+<div id="confirmModal" role="dialog" aria-modal="true" aria-label="Code löschen bestätigen">
+  <div class="modal-box">
+    <h3>🗑 Code löschen?</h3>
+    <p>Der gesamte Inhalt des Editors wird gelöscht. Dies kann nicht rückgängig gemacht werden.</p>
+    <div class="modal-actions">
+      <button class="btn" id="confirmCancel">Abbrechen</button>
+      <button class="btn btn-danger" id="confirmDelete" style="border-color:var(--err);">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOOLBAR ─────────────────────────────────────────────── -->
+<div class="toolbar">
+  <button class="btn btn-run" id="btnRun" aria-label="Code ausführen (Ctrl+Enter)">▶ Run</button>
+  <label class="auto-label" title="Automatisch ausführen beim Tippen">
+    <input type="checkbox" id="autoRun" aria-label="Auto-Run"> Auto
+  </label>
+  <div class="toolbar-sep"></div>
+  <button class="btn" id="btnClear" aria-label="Konsole leeren">Clear</button>
+  <button class="btn btn-danger" id="btnClearCode" aria-label="Code löschen">🗑 Code</button>
+  <button class="btn" id="btnLayout" aria-label="Layout wechseln">⊞</button>
+  <div class="toolbar-sep"></div>
+  <input id="findInput" type="text" placeholder="Suchen…" aria-label="Im Code suchen">
+  <span id="findCount" aria-live="polite">–</span>
+  <button class="btn" id="btnFindPrev" aria-label="Vorheriges Ergebnis">↑</button>
+  <button class="btn" id="btnFindNext" aria-label="Nächstes Ergebnis">↓</button>
+  <div class="toolbar-sep"></div>
+  <input id="gotoInput" type="number" placeholder="Zeile" aria-label="Zur Zeile springen" min="1">
+  <button class="btn" id="btnGoto" aria-label="Zur Zeile springen">→</button>
+  <div class="toolbar-sep"></div>
+  <button class="btn" id="btnAnalyse" aria-label="Code analysieren">🔍 Analyse</button>
+</div>
+
+<!-- ── WORKSPACE ───────────────────────────────────────────── -->
+<div class="workspace" id="workspace">
+
+  <div class="col-editor" id="colEditor">
+    <div class="panel-header">
+      <span>Editor</span>
+      <span title="Ctrl+M schaltet Tab-Einrückung um">Ctrl+M: Tab-Modus</span>
+    </div>
+    <div class="editor-area">
+      <div id="lineNums" aria-hidden="true">1</div>
+      <div class="editor-wrap">
+        <pre id="hlOverlay" aria-hidden="true"></pre>
+        <textarea id="codeEditor"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          aria-label="Code Editor"
+          aria-multiline="true"></textarea>
+      </div>
+    </div>
+    <div id="resizeHandle" role="separator" aria-label="Konsolengröße anpassen"></div>
+    <div id="consolePane" aria-label="Konsole">
+      <div class="console-tabs">
+        <button class="tab-btn active" id="tabConsole">Konsole</button>
+        <button class="tab-btn" id="tabAnalyse">
+          Analyse<span class="issue-badge" id="issueBadge"></span>
+        </button>
+      </div>
+      <div id="consoleOut" role="log" aria-live="polite"></div>
+      <div id="analysePanel" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="col-right">
+    <div id="previewPane">
+      <div class="panel-header"><span>Vorschau</span></div>
+      <iframe id="preview"
+        sandbox="allow-scripts allow-modals allow-pointer-lock"
+        allow="autoplay"
+        title="Live-Vorschau"
+        aria-label="Vorschau-Bereich"></iframe>
+    </div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+// ── CONSTANTS ──────────────────────────────────────────────────
+const STORAGE_KEY   = 'forge_v3_code';
+const AUTORUN_KEY   = 'forge_v3_autorun';
+const MAX_LOG_LINES = 200;
+const LOOP_TIMEOUT  = 2000;
+const LOOP_ITER_MAX = 2000000;
+
+const VOID_TAGS = new Set([
+  'area','base','br','col','embed','hr','img','input',
+  'link','meta','param','source','track','wbr'
+]);
+
+const JS_KEYWORDS = new Set([
+  'break','case','catch','class','const','continue','debugger','default',
+  'delete','do','else','export','extends','finally','for','from','function',
+  'if','import','in','instanceof','let','new','of','return','static',
+  'super','switch','this','throw','try','typeof','var','void','while',
+  'with','yield','async','await','true','false','null','undefined'
+]);
+
+// ── DOM ────────────────────────────────────────────────────────
+const editor      = document.getElementById('codeEditor');
+const hlOverlay   = document.getElementById('hlOverlay');
+const lineNums    = document.getElementById('lineNums');
+const preview     = document.getElementById('preview');
+const consoleOut  = document.getElementById('consoleOut');
+const analysePanel= document.getElementById('analysePanel');
+const workspace   = document.getElementById('workspace');
+const autoRunCb   = document.getElementById('autoRun');
+const findInput   = document.getElementById('findInput');
+const findCount   = document.getElementById('findCount');
+const gotoInput   = document.getElementById('gotoInput');
+const toast       = document.getElementById('toast');
+const issueBadge  = document.getElementById('issueBadge');
+
+// ── STATE ──────────────────────────────────────────────────────
+let runDebounce    = null;
+let toastTimer     = null;
+let findMatches    = [];
+let findIdx        = 0;
+let modeIdx        = 0;
+let lastLineCount  = 0;
+let tabCapture     = true;
+let lastHeartbeat  = Date.now();
+let watchdogTimer  = null;
+let errCount       = 0;
+let gutterIssues   = {};
+let analyseBusy    = false;
+
+// ── WATCHDOG (Parent Thread) ───────────────────────────────────
+function startWatchdog() {
+  lastHeartbeat = Date.now();
+  clearInterval(watchdogTimer);
+  watchdogTimer = setInterval(() => {
+    if (document.hidden) { lastHeartbeat = Date.now(); return; }
+    if (Date.now() - lastHeartbeat > LOOP_TIMEOUT) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+      preview.srcdoc = '';
+      addLog('error', '✖ FORGE: Watchdog – Endlosschleife (>2s) gestoppt');
+      showToast('⚠ Endlosschleife gestoppt', true);
+      preview.srcdoc = [
+        '<html><body style="background:#0f141c;color:#ff5370;',
+        'font-family:monospace;display:flex;align-items:center;',
+        'justify-content:center;height:100vh;text-align:center">',
+        '<div><h2>⚠ Timeout</h2><p>Endlosschleife erkannt –<br>',
+        'Vorschau wurde gestoppt.</p></div></body></html>'
+      ].join('');
+    }
+  }, 200);
+}
+
+// ── LOOP GUARD ─────────────────────────────────────────────────
+function stripStringsAndComments(code) {
+  return code.replace(/(\/\*[\s\S]*?\*\/|\/\/.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)/g, (match) => {
+    return ' '.repeat(match.length);
+  });
+}
+
+function findMatchingParen(code, start) {
+  let depth = 0;
+  for (let i = start; i < code.length; i++) {
+    if (code[i] === '(') depth++;
+    else if (code[i] === ')') { if (--depth === 0) return i; }
+  }
+  return -1;
+}
+
+function injectLoopGuard(code) {
+  const GUARD = 'if(++window.__forge_iter>' + LOOP_ITER_MAX + ')throw new Error("FORGE: Endlosschleife erkannt");';
+  const insertAt = [];
+
+  const stripped = stripStringsAndComments(code);
+
+  const reWF = /\b(while|for)\s*(?=\()/g;
+  let m;
+  while ((m = reWF.exec(stripped)) !== null) {
+    const parenEnd = findMatchingParen(stripped, m.index + m[0].length);
+    if (parenEnd === -1) continue;
+    let k = parenEnd + 1;
+    while (k < stripped.length && /\s/.test(stripped[k])) k++;
+    if (stripped[k] === '{') insertAt.push(k + 1);
+  }
+
+  const reDo = /\bdo\s*\{/g;
+  while ((m = reDo.exec(stripped)) !== null) {
+    insertAt.push(m.index + m[0].length);
+  }
+
+  insertAt.sort((a, b) => b - a);
+  for (const pos of insertAt) {
+    code = code.substring(0, pos) + GUARD + code.substring(pos);
+  }
+  return code;
+}
+
+function instrumentLoops(src) {
+  return src.replace(
+    /(<script\b(?![^>]*\bsrc\b)[^>]*>)([\s\S]*?)(<\/script>)/gi,
+    (_, open, body, close) => open + injectLoopGuard(body) + close
+  );
+}
+
+// ── BRIDGE ─────────────────────────────────────────────────────
+const BRIDGE = `<script>(function(){
+  window.__forge_iter = 0;
+  var _p = function(l,a){
+    try {
+      var m = Array.from(a).map(function(x){
+        if (x instanceof Error) return x.toString();
+        if (x !== null && typeof x === 'object') { try { return JSON.stringify(x,null,2); } catch(e) { return String(x); } }
+        return String(x);
+      }).join(' ');
+      window.parent.postMessage({type:'forge-log',level:l,msg:m},'*');
+    } catch(e) {}
+  };
+  ['log','warn','error','info'].forEach(function(n){
+    var o = console[n].bind(console);
+    console[n] = function(){ o.apply(console,arguments); _p(n,arguments); };
+  });
+  window.addEventListener('error', function(e){
+    _p('error', ['⚠ ' + e.message + ' (Zeile ' + e.lineno + ')']);
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    _p('error', ['⚠ Promise: ' + (e.reason && e.reason.message || e.reason)]);
+  });
+  function hb(){ window.parent.postMessage({type:'forge-hb'},'*'); requestAnimationFrame(hb); }
+  requestAnimationFrame(hb);
+})();<\/script>`;
+
+// ── RUN ────────────────────────────────────────────────────────
+function runCode() {
+  clearTimeout(runDebounce);
+  let src = instrumentLoops(editor.value);
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(src, 'text/html');
+
+    const bridgeScript = doc.createElement('script');
+    const bridgeMatch = BRIDGE.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    bridgeScript.textContent = bridgeMatch ? bridgeMatch[1] : '';
+
+    if (doc.head) {
+      doc.head.insertBefore(bridgeScript, doc.head.firstChild);
+    } else if (doc.body) {
+      doc.body.insertBefore(bridgeScript, doc.body.firstChild);
+    } else {
+      preview.srcdoc = BRIDGE + src;
+      startWatchdog();
+      return;
+    }
+
+    preview.srcdoc = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+  } catch (e) {
+    if (/<head\b[^>]*>/i.test(src))  src = src.replace(/(<head\b[^>]*>)/i, '$1' + BRIDGE);
+    else if (/<body\b[^>]*>/i.test(src))  src = src.replace(/(<body\b[^>]*>)/i, '$1' + BRIDGE);
+    else                                   src = BRIDGE + src;
+    preview.srcdoc = src;
+  }
+
+  startWatchdog();
+}
+
+function saveCode() {
+  try {
+    localStorage.setItem(STORAGE_KEY, editor.value);
+  } catch (e) {
+    addLog('warn', '⚠ localStorage voll – Code nicht gespeichert: ' + e.message);
+  }
+}
+
+// ── ONE-PASS CHARACTER TOKENIZER ───────────────────────────────
+function updateHighlighting() {
+  const raw = editor.value;
+  const len = raw.length;
+  let out = '';
+  let i = 0;
+  let state = 'none';
+  let buf = '';
+  let tagName = '';
+  let tagHasSrc = false;
+  let braceDepth = 0;
+  let tplStack = [];
+
+  function esc(ch) {
+    if (ch === '&') return '&amp;';
+    if (ch === '<') return '&lt;';
+    if (ch === '>') return '&gt;';
+    if (ch === '"') return '&quot;';
+    return ch;
+  }
+  function flush(cls) {
+    if (!buf) return;
+    out += cls ? '<span class="' + cls + '">' + buf + '</span>' : buf;
+    buf = '';
+  }
+
+  while (i < len) {
+    const ch = raw[i];
+    const nx = i + 1 < len ? raw[i + 1] : '';
+
+    if (state === 'script') {
+      if (ch === '{') { flush('hl-js'); buf = '{'; flush(null); braceDepth++; i++; continue; }
+      if (ch === '}') {
+        flush('hl-js'); braceDepth--;
+        if (tplStack.length > 0 && braceDepth === tplStack[tplStack.length - 1]) {
+          tplStack.pop(); buf = '}'; flush('hl-string'); state = 'script-str-bt'; i++; continue;
+        }
+        buf = '}'; flush(null); i++; continue;
+      }
+      if (ch === '<' && raw.substring(i, i + 8).toLowerCase() === '<\/script') {
+        let k = i + 8;
+        while (k < len && (raw[k] === ' ' || raw[k] === '\t' || raw[k] === '\n' || raw[k] === '\f' || raw[k] === '\r')) k++;
+        if (k < len && raw[k] === '>') {
+          flush('hl-js');
+          state = 'tag'; tagName = ''; tagHasSrc = false;
+          continue;
+        }
+      }
+      if (ch === '/' && nx === '/') {
+        flush('hl-js');
+        state = 'script-comment-line'; buf = '//'; i += 2; continue;
+      }
+      if (ch === '/' && nx === '*') {
+        flush('hl-js');
+        state = 'script-comment-block'; buf = '/*'; i += 2; continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        flush('hl-js');
+        state = 'script-str-' + (ch === '"' ? 'dq' : ch === "'" ? 'sq' : 'bt');
+        buf = esc(ch); i++; continue;
+      }
+      if (/[a-zA-Z_$]/.test(ch)) {
+        flush('hl-js');
+        let j = i;
+        while (j < len && /[a-zA-Z0-9_$]/.test(raw[j])) j++;
+        const word = raw.substring(i, j);
+        const cls = JS_KEYWORDS.has(word) ? 'hl-keyword' : 'hl-js';
+        out += '<span class="' + cls + '">' + word + '</span>';
+        i = j; continue;
+      }
+      if (/\d/.test(ch) && !/[a-zA-Z0-9_$]/.test(raw[i - 1] || '')) {
+        flush('hl-js');
+        let j = i;
+        while (j < len && /[\d.xXa-fA-FoObBn_eE+\-]/.test(raw[j])) j++;
+        out += '<span class="hl-number">' + raw.substring(i, j) + '</span>';
+        i = j; continue;
+      }
+      buf += esc(ch); i++; continue;
+    }
+
+    if (state === 'script-comment-line') {
+      if (ch === '\n') { flush('hl-comment'); out += '\n'; state = 'script'; i++; continue; }
+      buf += esc(ch); i++; continue;
+    }
+    if (state === 'script-comment-block') {
+      if (ch === '*' && nx === '/') { buf += '*/'; flush('hl-comment'); state = 'script'; i += 2; continue; }
+      buf += esc(ch); i++; continue;
+    }
+
+    if (state === 'script-str-dq') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      buf += esc(ch); i++;
+      if (ch === '"') { flush('hl-string'); state = 'script'; }
+      continue;
+    }
+    if (state === 'script-str-sq') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      buf += esc(ch); i++;
+      if (ch === "'") { flush('hl-string'); state = 'script'; }
+      continue;
+    }
+    if (state === 'script-str-bt') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      if (ch === '$' && nx === '{') {
+        buf += '${'; flush('hl-string'); state = 'script'; tplStack.push(braceDepth); braceDepth++; i += 2; continue;
+      }
+      buf += esc(ch); i++;
+      if (ch === '`') { flush('hl-string'); state = 'script'; }
+      continue;
+    }
+
+    if (state === 'comment-line') {
+      if (ch === '\n') { flush('hl-comment'); out += '\n'; state = 'none'; i++; continue; }
+      buf += esc(ch); i++; continue;
+    }
+    if (state === 'comment-block') {
+      if (ch === '*' && nx === '/') { buf += '*/'; flush('hl-comment'); state = 'none'; i += 2; continue; }
+      buf += esc(ch); i++; continue;
+    }
+
+    if (state === 'str-dq') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      buf += esc(ch); i++;
+      if (ch === '"') { flush('hl-string'); state = 'none'; }
+      continue;
+    }
+    if (state === 'str-sq') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      buf += esc(ch); i++;
+      if (ch === "'") { flush('hl-string'); state = 'none'; }
+      continue;
+    }
+    if (state === 'str-bt') {
+      if (ch === '\\') { const nextCh = i + 1 < len ? raw[i+1] : ''; buf += '\\' + esc(nextCh); i += 2; continue; }
+      buf += esc(ch); i++;
+      if (ch === '`') { flush('hl-string'); state = 'none'; }
+      continue;
+    }
+
+    if (state === 'tag') {
+      if (/\s/.test(ch)) {
+        flush('hl-tag');
+        state = 'tag-attrs';
+        buf = esc(ch); i++; continue;
+      }
+      if (ch === '>') {
+        buf += '&gt;'; flush('hl-tag');
+        if (tagName.toLowerCase() === 'script' && !tagHasSrc) {
+          state = 'script';
+        } else {
+          state = 'none';
+        }
+        tagName = ''; tagHasSrc = false; i++; continue;
+      }
+      if (ch === '/') { buf += '/'; i++; continue; }
+      buf += esc(ch);
+      if (!/[!?]/.test(ch)) tagName += ch;
+      i++; continue;
+    }
+
+    if (state === 'tag-attrs') {
+      if (ch === '>') {
+        buf += '&gt;'; flush(null);
+        if (tagName.toLowerCase() === 'script' && !tagHasSrc) {
+          state = 'script';
+        } else {
+          state = 'none';
+        }
+        tagName = ''; tagHasSrc = false; i++; continue;
+      }
+      if (ch === '"') { flush(null); state = 'tag-str-dq'; buf = '&quot;'; i++; continue; }
+      if (ch === "'") { flush(null); state = 'tag-str-sq'; buf = "'";      i++; continue; }
+
+      if (/[a-zA-Z_:@]/.test(ch)) {
+        flush(null);
+        let j = i;
+        while (j < len && /[a-zA-Z0-9_:@.-]/.test(raw[j])) j++;
+        const attrName = raw.substring(i, j);
+        if (attrName.toLowerCase() === 'src') tagHasSrc = true;
+        let k = j;
+        while (k < len && raw[k] === ' ') k++;
+        if (raw[k] === '=') {
+          out += '<span class="hl-attr">' + attrName + '</span>';
+          for (let q = j; q <= k; q++) out += esc(raw[q]);
+          i = k + 1; continue;
+        }
+        buf = attrName; flush(null);
+        i = j; continue;
+      }
+      buf += esc(ch); i++; continue;
+    }
+
+    if (state === 'tag-str-dq') {
+      buf += esc(ch); i++;
+      if (ch === '"') { flush('hl-string'); state = 'tag-attrs'; }
+      continue;
+    }
+    if (state === 'tag-str-sq') {
+      buf += esc(ch); i++;
+      if (ch === "'") { flush('hl-string'); state = 'tag-attrs'; }
+      continue;
+    }
+
+    if (ch === '<') {
+      flush(null);
+      if (raw.substring(i, i + 4) === '<!' + '--') {
+        state = 'comment-block-html'; buf = '<!' + '--'; i += 4; continue;
+      }
+      state = 'tag'; tagName = ''; tagHasSrc = false;
+      buf = '&lt;'; i++; continue;
+    }
+    if (ch === '/' && nx === '/') { flush(null); state = 'comment-line'; buf = '//'; i += 2; continue; }
+    if (ch === '/' && nx === '*') { flush(null); state = 'comment-block'; buf = '/*'; i += 2; continue; }
+    if (ch === '"') { flush(null); state = 'str-dq'; buf = '&quot;'; i++; continue; }
+    if (ch === "'") { flush(null); state = 'str-sq'; buf = "'"; i++; continue; }
+    if (ch === '`') { flush(null); state = 'str-bt'; buf = '`'; i++; continue; }
+
+    if (/[a-zA-Z_$]/.test(ch)) {
+      let j = i;
+      while (j < len && /[a-zA-Z0-9_$-]/.test(raw[j])) j++;
+      buf += raw.substring(i, j);
+      i = j; continue;
+    }
+
+    buf += esc(ch); i++;
+  }
+
+  if (state.startsWith('str') || state.startsWith('script-str')) flush('hl-string');
+  else if (state.startsWith('comment') || state.startsWith('script-comment')) flush('hl-comment');
+  else if (state.startsWith('tag')) flush('hl-tag');
+  else flush(null);
+
+  hlOverlay.innerHTML = out;
+}
+
+// ── LINE NUMBERS ─────────────────────────────────────────────
+function updateLineNumbers() {
+  const n = (editor.value.match(/\n/g) || []).length + 1;
+  const hasMarkers = Object.keys(gutterIssues).length > 0;
+  if (n === lastLineCount && !hasMarkers) return;
+  lastLineCount = n;
+  if (hasMarkers) {
+    const sev = { error: 'gm-e', warning: 'gm-w', info: 'gm-i' };
+    let html = '';
+    for (let i = 1; i <= n; i++) {
+      const cls = gutterIssues[i] ? sev[gutterIssues[i]] : '';
+      html += cls ? `<span class="${cls}">${i}</span>` : `<span>${i}</span>`;
+    }
+    lineNums.innerHTML = html;
+  } else {
+    let s = '';
+    for (let i = 1; i <= n; i++) s += i + '\n';
+    lineNums.textContent = s;
+  }
+}
+
+// ── STRING REGIONS ───────────────────────────────────────────
+function buildStringRegions(text) {
+  const regions = [];
+  let state = 'none', start = -1, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\n' && (state === 'sq' || state === 'dq')) {
+      regions.push([start, i - 1]); state = 'none'; continue;
+    }
+    if (esc) { esc = false; continue; }
+    if (ch === '\\' && state !== 'none') { esc = true; continue; }
+    if (state === 'none') {
+      if      (ch === '"')  { state = 'dq'; start = i; }
+      else if (ch === "'")  { state = 'sq'; start = i; }
+      else if (ch === '`')  { state = 'bt'; start = i; }
+    } else if (
+      (state === 'dq' && ch === '"') ||
+      (state === 'sq' && ch === "'") ||
+      (state === 'bt' && ch === '`')
+    ) { regions.push([start, i]); state = 'none'; }
+  }
+  if (state !== 'none') regions.push([start, text.length - 1]);
+  return regions;
+}
+
+let _strRegions = null, _strRegText = '';
+function isInsideString(text, pos) {
+  if (text !== _strRegText) { _strRegions = buildStringRegions(text); _strRegText = text; }
+  let lo = 0, hi = _strRegions.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1, [s, e] = _strRegions[mid];
+    if (pos >= s && pos <= e) return true;
+    if (pos < s) hi = mid - 1; else lo = mid + 1;
+  }
+  return false;
+}
+
+// ── HTML TAG AUTOCOMPLETE ─────────────────────────────────────
+function getLastOpenTag(text) {
+  const re = /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>/g;
+  const stack = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const [, close, tag] = m;
+    const t = tag.toLowerCase();
+    if (VOID_TAGS.has(t)) continue;
+    if (close) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i] === t) { stack.length = i; break; }
+      }
+    } else { stack.push(t); }
+  }
+  return stack.length ? stack[stack.length - 1] : null;
+}
+
+// ── CONSOLE ───────────────────────────────────────────────────
+function addLog(level, msg) {
+  while (consoleOut.children.length >= MAX_LOG_LINES)
+    consoleOut.removeChild(consoleOut.firstChild);
+  const el = document.createElement('div');
+  el.className = 'log-entry log-' + level;
+  el.textContent = msg;
+  consoleOut.appendChild(el);
+  consoleOut.scrollTop = consoleOut.scrollHeight;
+}
+
+function clearConsole() {
+  consoleOut.innerHTML = '';
+  errCount = 0;
+  switchTab('console');
+  addLog('info', 'Console geleert');
+}
+
+// ── CODE LÖSCHEN (mit Bestätigung) ─────────────────────────────
+function requestClearCode() {
+  document.getElementById('confirmModal').classList.add('open');
+}
+
+function clearCode() {
+  editor.value = '';
+  gutterIssues = {};
+  issueBadge.className = 'issue-badge';
+  updateLineNumbers();
+  updateHighlighting();
+  saveCode();
+  editor.focus();
+  showToast('Code gelöscht');
+  document.getElementById('confirmModal').classList.remove('open');
+}
+
+document.getElementById('confirmCancel').addEventListener('click', () => {
+  document.getElementById('confirmModal').classList.remove('open');
+});
+document.getElementById('confirmDelete').addEventListener('click', clearCode);
+
+// ── TAB SYSTEM ────────────────────────────────────────────────
+function switchTab(tab) {
+  const isConsole = tab === 'console';
+  consoleOut.style.display   = isConsole ? '' : 'none';
+  analysePanel.style.display = isConsole ? 'none' : '';
+  document.getElementById('tabConsole').classList.toggle('active', isConsole);
+  document.getElementById('tabAnalyse').classList.toggle('active', !isConsole);
+}
+
+// ── CODE ANALYSE ──────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
+function renderDiagnostics(issues) {
+  const badge = issueBadge;
+  if (!Array.isArray(issues) || !issues.length) {
+    analysePanel.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;color:var(--accent);">✓ Keine Probleme gefunden</div>';
+    badge.textContent = '✓';
+    badge.className = 'issue-badge visible ok';
+    gutterIssues = {};
+    updateLineNumbers();
+    return;
+  }
+
+  const sev = { error: 3, warning: 2, info: 1 };
+  gutterIssues = {};
+  issues.forEach(iss => {
+    const ln = iss.line;
+    if (!gutterIssues[ln] || sev[iss.severity] > sev[gutterIssues[ln]]) {
+      gutterIssues[ln] = iss.severity;
+    }
+  });
+  updateLineNumbers();
+
+  const errors = issues.filter(i => i.severity === 'error').length;
+  const warns  = issues.filter(i => i.severity === 'warning').length;
+  badge.textContent = errors ? errors + ' Err' : warns + ' Warn';
+  badge.className = 'issue-badge visible' + (errors ? '' : ' warn');
+
+  const icons = { error: '✖', warning: '⚠', info: 'ℹ' };
+  analysePanel.innerHTML = issues.map((iss, idx) => `
+    <div class="diag-entry sev-${escHtml(iss.severity || 'info')}" data-line="${iss.line || 0}" data-idx="${idx}">
+      <span class="diag-icon">${icons[iss.severity] || '·'}</span>
+      <div class="diag-body">
+        <div class="diag-loc">Zeile ${iss.line || '?'}</div>
+        <div class="diag-msg">${escHtml(iss.message || '')}</div>
+        ${iss.suggestion ? `<div class="diag-sug">→ ${escHtml(iss.suggestion)}</div>` : ''}
+      </div>
+    </div>`).join('');
+
+  analysePanel.querySelectorAll('.diag-entry').forEach(el => {
+    el.addEventListener('click', () => {
+      const line = parseInt(el.dataset.line);
+      if (line > 0) gotoLineByNum(line);
+    });
+  });
+}
+
+function gotoLineByNum(n) {
+  const lines = editor.value.split('\n');
+  if (n < 1 || n > lines.length) return;
+  const pos = lines.slice(0, n - 1).reduce((s, l) => s + l.length + 1, 0);
+  editor.focus();
+  editor.setSelectionRange(pos, pos + lines[n - 1].length);
+  switchTab('console');
+}
+
+async function analyseCode() {
+  if (analyseBusy) return;
+  const code = editor.value.trim();
+  if (!code) { showToast('Kein Code zum Analysieren', true); return; }
+
+  analyseBusy = true;
+  const btn = document.getElementById('btnAnalyse');
+  btn.textContent = '⏳…';
+  btn.style.opacity = '0.7';
+
+  switchTab('analyse');
+  analysePanel.innerHTML = '<div style="padding:16px;font-size:11px;color:#4b5a72;">Analysiere Code…</div>';
+
+  const SYSTEM = `Du bist ein präziser Code-Analyzer für eine Web-Sandbox.
+Analysiere den Code und gib NUR ein JSON-Array zurück – kein Markdown, keine Erklärungen außerhalb des JSON.
+
+Schema: [{"line":N,"severity":"error"|"warning"|"info","message":"<max 80 Zeichen>","suggestion":"<optional max 100 Zeichen>"}]
+
+Analysiere: Syntaxfehler, Logikfehler, XSS/Sicherheit, Performance, fehlende Fehlerbehandlung, Best Practices für HTML/CSS/JS.
+Max 12 Einträge. Wichtigstes zuerst. Kein Problem gefunden → [].`;
+
+  try {
+    const apiKey = localStorage.getItem('forge_api_key') || '';
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    }
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        system: SYSTEM,
+        messages: [{ role: 'user', content: code }]
+      })
+    });
+
+    if (resp.status === 401) {
+      analyseBusy = false;
+      btn.textContent = '🔍 Analyse'; btn.style.opacity = '';
+      showApiKeyModal();
+      return;
+    }
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    const data = await resp.json();
+    const raw  = (data.content || []).map(b => b.text || '').join('');
+
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('Ungültiges Antwortformat vom Analyzer');
+
+    const issues = JSON.parse(jsonMatch[0]);
+
+    renderDiagnostics(Array.isArray(issues) ? issues : []);
+    showToast('✓ Analyse abgeschlossen');
+
+  } catch (e) {
+    analysePanel.innerHTML = `<div style="padding:14px;font-size:11px;color:var(--err);">Fehler: ${escHtml(e.message)}</div>`;
+    showToast('Analyse fehlgeschlagen', true);
+  }
+
+  analyseBusy = false;
+  btn.textContent = '🔍 Analyse'; btn.style.opacity = '';
+}
+
+// ── API KEY MODAL ─────────────────────────────────────────────
+function showApiKeyModal() {
+  const modal = document.getElementById('apiModal');
+  const input = document.getElementById('apiKeyInput');
+  input.value = localStorage.getItem('forge_api_key') || '';
+  modal.classList.add('open');
+  setTimeout(() => input.focus(), 50);
+}
+
+document.getElementById('apiKeyCancel').addEventListener('click', () => {
+  document.getElementById('apiModal').classList.remove('open');
+});
+document.getElementById('apiKeySave').addEventListener('click', () => {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key) { document.getElementById('apiKeyInput').focus(); return; }
+  localStorage.setItem('forge_api_key', key);
+  document.getElementById('apiModal').classList.remove('open');
+  analyseCode();
+});
+document.getElementById('apiKeyInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('apiKeySave').click();
+  if (e.key === 'Escape') document.getElementById('apiKeyCancel').click();
+});
+
+document.getElementById('tabConsole').addEventListener('click', () => switchTab('console'));
+document.getElementById('tabAnalyse').addEventListener('click', () => switchTab('analyse'));
+
+// ── TOAST ─────────────────────────────────────────────────────
+function showToast(msg, isErr = false) {
+  toast.textContent = msg;
+  toast.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.className = ''; }, 2200);
+}
+
+// ── MESSAGE HANDLER ───────────────────────────────────────────
+window.addEventListener('message', e => {
+  if (e.source !== preview.contentWindow) return;
+  if (!e.data) return;
+  if (e.data.type === 'forge-hb') { lastHeartbeat = Date.now(); return; }
+  if (e.data.type === 'forge-log') addLog(e.data.level, e.data.msg);
+});
+
+// ── FIND / GOTO ───────────────────────────────────────────────
+function doFind() {
+  const q = findInput.value;
+  if (!q) { findCount.textContent = '–'; findMatches = []; findIdx = 0; return; }
+  try {
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    findMatches = []; findIdx = 0;
+    let m;
+    while ((m = re.exec(editor.value)) !== null) {
+      findMatches.push(m.index);
+      if (re.lastIndex === m.index) re.lastIndex++;
+    }
+    findCount.textContent = findMatches.length ? '1/' + findMatches.length : '0';
+    if (findMatches.length) jumpToMatch(0);
+  } catch (_) { findCount.textContent = 'Err'; findMatches = []; findIdx = 0; }
+}
+
+function jumpToMatch(i) {
+  if (!findMatches.length) return;
+  findIdx = ((i % findMatches.length) + findMatches.length) % findMatches.length;
+  editor.focus();
+  editor.setSelectionRange(findMatches[findIdx], findMatches[findIdx] + findInput.value.length);
+  findCount.textContent = (findIdx + 1) + '/' + findMatches.length;
+}
+
+function findNext() { jumpToMatch(findIdx + 1); }
+function findPrev() { jumpToMatch(findIdx - 1); }
+
+function gotoLine() {
+  const n = parseInt(gotoInput.value);
+  if (isNaN(n) || n < 1) return;
+  const lines = editor.value.split('\n');
+  if (n > lines.length) return;
+  const pos = lines.slice(0, n - 1).reduce((s, l) => s + l.length + 1, 0);
+  editor.focus();
+  editor.setSelectionRange(pos, pos + lines[n - 1].length);
+}
+
+// ── EDITOR INPUT ──────────────────────────────────────────────
+editor.addEventListener('input', () => {
+  if (Object.keys(gutterIssues).length) {
+    gutterIssues = {};
+    issueBadge.className = 'issue-badge';
+  }
+  updateLineNumbers();
+  updateHighlighting();
+  saveCode();
+  if (findInput.value) doFind();
+
+  const pos = editor.selectionStart;
+  const before = editor.value.substring(0, pos);
+  if (before.endsWith('</') && !isInsideString(editor.value, pos - 2)) {
+    const tag = getLastOpenTag(before.slice(0, -2));
+    if (tag) {
+      editor.setRangeText(tag + '>', pos, pos, 'end');
+      updateLineNumbers(); updateHighlighting(); saveCode();
+    }
+  }
+
+  if (autoRunCb.checked) {
+    clearTimeout(runDebounce);
+    runDebounce = setTimeout(runCode, 900);
+  }
+});
+
+editor.addEventListener('scroll', () => {
+  lineNums.scrollTop = editor.scrollTop;
+  hlOverlay.scrollTop = editor.scrollTop;
+  hlOverlay.scrollLeft = editor.scrollLeft;
+});
+
+// ── KEYBOARD HANDLER ──────────────────────────────────────────
+editor.addEventListener('keydown', e => {
+  const ctrl = e.ctrlKey || e.metaKey;
+
+  if (ctrl && e.key === 'Enter') { e.preventDefault(); runCode(); return; }
+
+  if (ctrl && e.code === 'KeyM') {
+    e.preventDefault();
+    tabCapture = !tabCapture;
+    showToast(tabCapture ? '⇥ Tab: Einrückung' : '⇥ Tab: Navigation');
+    return;
+  }
+
+  const s   = editor.selectionStart;
+  const end = editor.selectionEnd;
+
+  if (e.key === 'Tab' && tabCapture) {
+    e.preventDefault();
+    const lineStart = editor.value.lastIndexOf('\n', s - 1) + 1;
+    const lineEnd   = editor.value.indexOf('\n', end);
+    const region    = editor.value.substring(lineStart, lineEnd === -1 ? editor.value.length : lineEnd);
+    const updated   = e.shiftKey
+      ? region.split('\n').map(l => l.replace(/^ {1,4}/, '')).join('\n')
+      : region.split('\n').map(l => '    ' + l).join('\n');
+    editor.setRangeText(updated, lineStart, lineEnd === -1 ? editor.value.length : lineEnd, 'end');
+    updateLineNumbers(); updateHighlighting(); saveCode();
+    if (autoRunCb.checked) { clearTimeout(runDebounce); runDebounce = setTimeout(runCode, 900); }
+    return;
+  }
+
+  const OPEN  = { '{':'}', '[':']', '(':')' };
+  const CLOSE = new Set(['}', ']', ')']);
+
+  if (OPEN[e.key]) {
+    e.preventDefault();
+    if (s !== end) {
+      editor.setRangeText(e.key + editor.value.substring(s, end) + OPEN[e.key], s, end, 'end');
+    } else {
+      editor.setRangeText(e.key + OPEN[e.key], s, end, 'end');
+      editor.setSelectionRange(s + 1, s + 1);
+    }
+    updateLineNumbers(); updateHighlighting(); saveCode(); return;
+  }
+
+  if (CLOSE.has(e.key) && s === end && editor.value[s] === e.key) {
+    e.preventDefault();
+    editor.setSelectionRange(s + 1, s + 1); return;
+  }
+
+  if (e.key === '"' || e.key === "'" || e.key === '`') {
+    e.preventDefault();
+    const next = editor.value[s];
+    if (s === end && next === e.key) {
+      editor.setSelectionRange(s + 1, s + 1);
+    } else if (s !== end) {
+      editor.setRangeText(e.key + editor.value.substring(s, end) + e.key, s, end, 'end');
+    } else {
+      editor.setRangeText(e.key + e.key, s, end, 'end');
+      editor.setSelectionRange(s + 1, s + 1);
+    }
+    updateLineNumbers(); updateHighlighting(); saveCode(); return;
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (s !== end) editor.setRangeText('', s, end, 'end');
+    const before = editor.value.substring(0, s);
+    const lineStart = before.lastIndexOf('\n') + 1;
+    const line      = before.substring(lineStart);
+    const indent    = (line.match(/^(\s*)/) || [''])[0];
+    const extra     = /[{(\[]\s*$/.test(line.trimEnd()) && !/\/\/.*[{(\[]\s*$/.test(line) ? '    ' : '';
+    editor.setRangeText('\n' + indent + extra, s, s, 'end');
+    const np = s + 1 + indent.length + extra.length;
+    editor.setSelectionRange(np, np);
+    updateLineNumbers(); updateHighlighting(); saveCode();
+    if (autoRunCb.checked) { clearTimeout(runDebounce); runDebounce = setTimeout(runCode, 900); }
+  }
+});
+
+// ── BUTTON EVENTS ─────────────────────────────────────────────
+document.getElementById('btnRun').addEventListener('click', runCode);
+document.getElementById('btnClear').addEventListener('click', clearConsole);
+document.getElementById('btnClearCode').addEventListener('click', requestClearCode);
+document.getElementById('btnFindPrev').addEventListener('click', findPrev);
+document.getElementById('btnFindNext').addEventListener('click', findNext);
+document.getElementById('btnGoto').addEventListener('click', gotoLine);
+document.getElementById('btnAnalyse').addEventListener('click', analyseCode);
+
+findInput.addEventListener('input', doFind);
+findInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? findPrev() : findNext(); }
+  if (e.key === 'Escape') { findInput.value = ''; doFind(); editor.focus(); }
+});
+gotoInput.addEventListener('keydown', e => { if (e.key === 'Enter') gotoLine(); });
+autoRunCb.addEventListener('change', () => localStorage.setItem(AUTORUN_KEY, autoRunCb.checked));
+
+// ── CONSOLE RESIZE ────────────────────────────────────────────
+const resizeHandle  = document.getElementById('resizeHandle');
+const consolePane   = document.getElementById('consolePane');
+let resizing = false, rzY = 0, rzH = 0;
+
+resizeHandle.addEventListener('mousedown', e => {
+  resizing = true; rzY = e.clientY; rzH = consolePane.getBoundingClientRect().height;
+  document.body.style.userSelect = 'none'; document.body.style.cursor = 'row-resize';
+});
+resizeHandle.addEventListener('touchstart', e => {
+  e.preventDefault();
+  resizing = true; rzY = e.touches[0].clientY; rzH = consolePane.getBoundingClientRect().height;
+}, { passive: false });
+document.addEventListener('mousemove', e => {
+  if (!resizing) return;
+  const h = Math.max(40, Math.min(window.innerHeight * 0.65, rzH + (rzY - e.clientY)));
+  consolePane.style.height = h + 'px';
+});
+document.addEventListener('touchmove', e => {
+  if (!resizing) return;
+  e.preventDefault();
+  const h = Math.max(40, Math.min(window.innerHeight * 0.65, rzH + (rzY - e.touches[0].clientY)));
+  consolePane.style.height = h + 'px';
+}, { passive: false });
+document.addEventListener('mouseup', () => {
+  resizing = false; document.body.style.userSelect = ''; document.body.style.cursor = '';
+});
+document.addEventListener('touchend', () => { resizing = false; });
+
+// ── LAYOUT TOGGLE ─────────────────────────────────────────────
+const LAYOUTS = ['split', 'vertical'];
+document.getElementById('btnLayout').addEventListener('click', () => {
+  modeIdx = (modeIdx + 1) % LAYOUTS.length;
+  workspace.className = 'workspace' + (LAYOUTS[modeIdx] === 'split' ? '' : ' ' + LAYOUTS[modeIdx]);
+  consolePane.style.height = '';
+});
+
+document.querySelectorAll('.panel-header, .toolbar').forEach(el => {
+  let tx = 0;
+  el.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (Math.abs(e.changedTouches[0].clientX - tx) > 80) {
+      modeIdx = (modeIdx + 1) % LAYOUTS.length;
+      workspace.className = 'workspace' + (LAYOUTS[modeIdx] === 'split' ? '' : ' ' + LAYOUTS[modeIdx]);
+      consolePane.style.height = '';
+    }
+  });
+});
+
+// ── INIT ──────────────────────────────────────────────────────
+const savedAuto = localStorage.getItem(AUTORUN_KEY);
+if (savedAuto !== null) autoRunCb.checked = savedAuto === 'true';
+
+editor.value = localStorage.getItem(STORAGE_KEY) || `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f141c;
+      color: #e3e8f0;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 1rem;
+    }
+    h1 { color: #00e676; font-size: 2.5rem; }
+    p  { color: #4b5a72; }
+    button {
+      padding: 0.5rem 1.5rem;
+      background: #00e676;
+      border: none;
+      color: #000;
+      font-family: monospace;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <h1>FORGE</h1>
+  <p>Deine Code-Sandbox ist bereit.</p>
+  <button onclick="go()">Klick mich</button>
+  <script>
+    function go() {
+      console.log('FORGE läuft ✓');
+      console.info('Bereit für deinen Code.');
+    }
+    console.log('Sandbox gestartet.');
+  <\/script>
+</body>
+</html>`;
+
+updateLineNumbers();
+updateHighlighting();
+runCode();
+addLog('info', 'FORGE bereit · v3.1');
+</script>
+</body>
+</html>
