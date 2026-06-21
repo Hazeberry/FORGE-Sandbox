@@ -399,6 +399,27 @@
       z-index: 10000;
     }
     #confirmModal.open { display: flex; }
+
+    /* ── FULLSCREEN PREVIEW ── */
+    #fullscreenOverlay {
+      position: fixed; inset: 0;
+      background: #fff;
+      display: none;
+      flex-direction: column;
+      z-index: 10001;
+    }
+    #fullscreenOverlay.open { display: flex; }
+    #fullscreenBar {
+      height: 40px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 12px;
+      flex-shrink: 0;
+    }
+    #fullscreenFrame { flex: 1; border: none; width: 100%; background: #fff; }
   </style>
 </head>
 <body>
@@ -432,6 +453,14 @@
   </div>
 </div>
 
+<!-- ── FULLSCREEN PREVIEW ──────────────────────────────────────── -->
+<div id="fullscreenOverlay" role="dialog" aria-modal="true" aria-label="Vorschau Vollbild">
+  <div id="fullscreenBar">
+    <button class="btn" id="btnFullscreenClose" aria-label="Vollbild schließen">✕ Schließen</button>
+  </div>
+  <iframe id="fullscreenFrame" sandbox="allow-scripts allow-modals allow-pointer-lock" allow="autoplay; fullscreen" title="Vollbild-Vorschau"></iframe>
+</div>
+
 <!-- ── TOOLBAR ─────────────────────────────────────────────── -->
 <div class="toolbar">
   <button class="btn btn-run" id="btnRun" aria-label="Code ausführen (Ctrl+Enter)">▶ Run</button>
@@ -442,6 +471,8 @@
   <button class="btn" id="btnClear" aria-label="Konsole leeren">Clear</button>
   <button class="btn btn-danger" id="btnClearCode" aria-label="Code löschen">🗑 Code</button>
   <button class="btn" id="btnLayout" aria-label="Layout wechseln">⊞</button>
+  <button class="btn" id="btnExport" aria-label="Code exportieren">↓ Export</button>
+  <button class="btn" id="btnConvert" aria-label="JS in HTML umwandeln" title="Reines JS → vollständiges HTML">JS→HTML</button>
   <div class="toolbar-sep"></div>
   <input id="findInput" type="text" placeholder="Suchen…" aria-label="Im Code suchen">
   <span id="findCount" aria-live="polite">–</span>
@@ -490,7 +521,10 @@
 
   <div class="col-right">
     <div id="previewPane">
-      <div class="panel-header"><span>Vorschau</span></div>
+      <div class="panel-header">
+        <span>Vorschau</span>
+        <button class="btn" id="btnFullscreen" aria-label="Vorschau im Vollbild" title="Vollbild" style="padding:2px 8px;font-size:13px;line-height:1;">⛶</button>
+      </div>
       <iframe id="preview"
         sandbox="allow-scripts allow-modals allow-pointer-lock"
         allow="autoplay"
@@ -508,7 +542,7 @@
 const STORAGE_KEY   = 'forge_v3_code';
 const AUTORUN_KEY   = 'forge_v3_autorun';
 const MAX_LOG_LINES = 200;
-const LOOP_TIMEOUT  = 2000;
+const LOOP_TIMEOUT  = 4000;  // großzügig: GC-Pausen/Render-Hänger auf schwachen Geräten überbrücken
 const LOOP_ITER_MAX = 2000000;
 
 const VOID_TAGS = new Set([
@@ -562,10 +596,13 @@ function startWatchdog() {
     if (Date.now() - lastHeartbeat > LOOP_TIMEOUT) {
       clearInterval(watchdogTimer);
       watchdogTimer = null;
-      preview.srcdoc = '';
-      addLog('error', '✖ FORGE: Watchdog – Endlosschleife (>2s) gestoppt');
+      // Das gerade aktive iframe stoppen (Vollbild hat Vorrang, wenn offen)
+      const fsOpen = fsOverlay.classList.contains('open');
+      const target = fsOpen ? fsFrame : preview;
+      target.srcdoc = '';
+      addLog('error', '✖ FORGE: Watchdog – Endlosschleife (>4s) gestoppt');
       showToast('⚠ Endlosschleife gestoppt', true);
-      preview.srcdoc = [
+      target.srcdoc = [
         '<html><body style="background:#0f141c;color:#ff5370;',
         'font-family:monospace;display:flex;align-items:center;',
         'justify-content:center;height:100vh;text-align:center">',
@@ -630,6 +667,30 @@ function instrumentLoops(src) {
 // ── BRIDGE ─────────────────────────────────────────────────────
 const BRIDGE = `<script>(function(){
   window.__forge_iter = 0;
+
+  // localStorage/sessionStorage-Ersatz: Das iframe läuft ohne 'allow-same-origin'
+  // (Sicherheit!), echtes localStorage wirft daher SecurityError und bricht den
+  // User-Code ab. Wir hängen einen In-Memory-Ersatz davor – Code mit Highscores,
+  // Settings etc. läuft durch (Daten halten nur für die Sitzung).
+  (function(){
+    function MemStore(){ var d = {}; return {
+      getItem: function(k){ return Object.prototype.hasOwnProperty.call(d, k) ? d[k] : null; },
+      setItem: function(k, v){ d[k] = String(v); },
+      removeItem: function(k){ delete d[k]; },
+      clear: function(){ d = {}; },
+      key: function(i){ return Object.keys(d)[i] || null; },
+      get length(){ return Object.keys(d).length; }
+    }; }
+    function safeInstall(name){
+      try { var t = window[name]; t.getItem('__forge_probe__'); }
+      catch(e) {
+        try { Object.defineProperty(window, name, { value: MemStore(), configurable: true }); } catch(_){}
+      }
+    }
+    safeInstall('localStorage');
+    safeInstall('sessionStorage');
+  })();
+
   var _p = function(l,a){
     try {
       var m = Array.from(a).map(function(x){
@@ -650,8 +711,17 @@ const BRIDGE = `<script>(function(){
   window.addEventListener('unhandledrejection', function(e){
     _p('error', ['⚠ Promise: ' + (e.reason && e.reason.message || e.reason)]);
   });
-  function hb(){ window.parent.postMessage({type:'forge-hb'},'*'); requestAnimationFrame(hb); }
-  requestAnimationFrame(hb);
+  // Heartbeat über ZWEI Kanäle:
+  // - requestAnimationFrame: schnell, aber vom Browser auf ~0 gedrosselt wenn
+  //   das iframe nicht sichtbar gerendert wird (Hintergrund, Bildschirm aus).
+  // - setInterval: wird nur auf ~1/s gedrosselt, nie ganz gestoppt.
+  // Eine echte Endlosschleife blockiert den Thread und damit BEIDE Kanäle,
+  // also bleibt der Loop-Schutz erhalten – aber saubere rAF-Animationen
+  // lösen keinen Fehlalarm mehr aus.
+  function hb(){ try { window.parent.postMessage({type:'forge-hb'},'*'); } catch(e){} }
+  function hbRaf(){ hb(); requestAnimationFrame(hbRaf); }
+  requestAnimationFrame(hbRaf);
+  setInterval(hb, 500);
 })();<\/script>`;
 
 // ── RUN ────────────────────────────────────────────────────────
@@ -1026,14 +1096,28 @@ function clearConsole() {
 }
 
 // ── CODE LÖSCHEN (mit Bestätigung) ─────────────────────────────
+let pendingConfirmAction = null;
+
+function openConfirm(title, body, actionLabel, action) {
+  const modal = document.getElementById('confirmModal');
+  modal.querySelector('h3').textContent = title;
+  modal.querySelector('p').textContent = body;
+  document.getElementById('confirmDelete').textContent = actionLabel;
+  pendingConfirmAction = action;
+  modal.classList.add('open');
+}
+
 function requestClearCode() {
-  document.getElementById('confirmModal').classList.add('open');
+  openConfirm('🗑 Code löschen?',
+    'Der gesamte Inhalt des Editors wird gelöscht. Dies kann nicht rückgängig gemacht werden.',
+    'Löschen', clearCode);
 }
 
 function clearCode() {
   editor.value = '';
   gutterIssues = {};
   issueBadge.className = 'issue-badge';
+  lastLineCount = 0;
   updateLineNumbers();
   updateHighlighting();
   saveCode();
@@ -1042,10 +1126,96 @@ function clearCode() {
   document.getElementById('confirmModal').classList.remove('open');
 }
 
+// ── EXPORT ────────────────────────────────────────────────────
+function downloadCode() {
+  const code = editor.value;
+  if (!code.trim()) { showToast('Kein Code zum Exportieren', true); return; }
+  const isHtml = /<(html|body|!DOCTYPE)\b/i.test(code);
+  const ext  = isHtml ? 'html' : 'js';
+  const mime = isHtml ? 'text/html' : 'text/javascript';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([code], { type: mime + ';charset=utf-8' }));
+  a.download = 'forge_export.' + ext;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('↓ Exportiert als forge_export.' + ext);
+  addLog('info', '💾 Exportiert: forge_export.' + ext);
+}
+
+// ── JS → HTML ─────────────────────────────────────────────────
+function requestConvertJsToHtml() {
+  const code = editor.value.trim();
+  if (!code) { showToast('Kein Code zum Konvertieren', true); return; }
+  if (/<(html|body|!DOCTYPE)\b/i.test(code)) { showToast('⚠ Bereits HTML', true); return; }
+  openConfirm('⚡ JS → HTML umwandeln?',
+    'Dein JS-Code wird durch ein vollständiges HTML-Gerüst ersetzt. Der aktuelle Editor-Inhalt wird überschrieben.',
+    'Umwandeln', convertJsToHtml);
+}
+
+function convertJsToHtml() {
+  document.getElementById('confirmModal').classList.remove('open');
+  const code = editor.value.trim();
+  const safe = code.replace(/<\/script/gi, '<\\/script');
+  const html = `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Konvertiert · FORGE</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: #07070d;
+      color: #c8d0e0;
+      font-family: monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .err {
+      background: #1a0000;
+      border-left: 4px solid #ff6b6b;
+      padding: 1rem;
+      border-radius: 4px;
+      max-width: 600px;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    (function(){
+      try {
+        ${safe}
+      } catch(err) {
+        var d = document.createElement('div');
+        d.className = 'err';
+        d.innerHTML = '<strong>✖ Fehler:<\/strong><br>' + err.message;
+        document.body.appendChild(d);
+        console.error(err);
+      }
+    })();
+  <\/script>
+</body>
+</html>`;
+  editor.value = html;
+  lastLineCount = 0;
+  updateLineNumbers();
+  updateHighlighting();
+  saveCode();
+  runCode();
+  showToast('✓ JS → HTML konvertiert');
+  addLog('info', '⚡ JS→HTML: Konvertierung abgeschlossen');
+}
+
 document.getElementById('confirmCancel').addEventListener('click', () => {
   document.getElementById('confirmModal').classList.remove('open');
+  pendingConfirmAction = null;
 });
-document.getElementById('confirmDelete').addEventListener('click', clearCode);
+document.getElementById('confirmDelete').addEventListener('click', () => {
+  if (pendingConfirmAction) pendingConfirmAction();
+});
 
 // ── TAB SYSTEM ────────────────────────────────────────────────
 function switchTab(tab) {
@@ -1226,7 +1396,10 @@ function showToast(msg, isErr = false) {
 
 // ── MESSAGE HANDLER ───────────────────────────────────────────
 window.addEventListener('message', e => {
-  if (e.source !== preview.contentWindow) return;
+  // Sowohl normale Vorschau als auch Vollbild-Vorschau dürfen senden;
+  // immer nur eine läuft gleichzeitig (siehe openFullscreen).
+  const fsFrameEl = document.getElementById('fullscreenFrame');
+  if (e.source !== preview.contentWindow && e.source !== fsFrameEl.contentWindow) return;
   if (!e.data) return;
   if (e.data.type === 'forge-hb') { lastHeartbeat = Date.now(); return; }
   if (e.data.type === 'forge-log') addLog(e.data.level, e.data.msg);
@@ -1386,6 +1559,39 @@ editor.addEventListener('keydown', e => {
 document.getElementById('btnRun').addEventListener('click', runCode);
 document.getElementById('btnClear').addEventListener('click', clearConsole);
 document.getElementById('btnClearCode').addEventListener('click', requestClearCode);
+document.getElementById('btnExport').addEventListener('click', downloadCode);
+document.getElementById('btnConvert').addEventListener('click', requestConvertJsToHtml);
+
+// ── FULLSCREEN PREVIEW ────────────────────────────────────────
+const fsOverlay = document.getElementById('fullscreenOverlay');
+const fsFrame   = document.getElementById('fullscreenFrame');
+let fsSavedSrc  = '';
+function openFullscreen() {
+  if (!preview.srcdoc) { showToast('Keine Vorschau zum Anzeigen', true); return; }
+  // Haupt-Vorschau merken und anhalten: sonst laufen zwei iframes parallel
+  // mit voller requestAnimationFrame-Last → Speicher/CPU-Stau nach Minuten.
+  fsSavedSrc = preview.srcdoc;
+  preview.srcdoc = '';
+  fsFrame.srcdoc = fsSavedSrc;
+  fsOverlay.classList.add('open');
+  // Watchdog neu starten – überwacht jetzt das Vollbild-iframe (sendet eigene Heartbeats)
+  startWatchdog();
+}
+function closeFullscreen() {
+  fsOverlay.classList.remove('open');
+  fsFrame.srcdoc = '';   // Vollbild-iframe stoppen
+  // Haupt-Vorschau wiederherstellen und Watchdog neu starten
+  if (fsSavedSrc) {
+    preview.srcdoc = fsSavedSrc;
+    fsSavedSrc = '';
+    startWatchdog();
+  }
+}
+document.getElementById('btnFullscreen').addEventListener('click', openFullscreen);
+document.getElementById('btnFullscreenClose').addEventListener('click', closeFullscreen);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && fsOverlay.classList.contains('open')) closeFullscreen();
+});
 document.getElementById('btnFindPrev').addEventListener('click', findPrev);
 document.getElementById('btnFindNext').addEventListener('click', findNext);
 document.getElementById('btnGoto').addEventListener('click', gotoLine);
@@ -1486,12 +1692,12 @@ editor.value = localStorage.getItem(STORAGE_KEY) || `<!DOCTYPE html>
 <body>
   <h1>FORGE</h1>
   <p>Deine Code-Sandbox ist bereit.</p>
-  <button onclick="go()">Klick mich</button>
+  <button id="demoBtn">Klick mich</button>
   <script>
-    function go() {
+    document.getElementById('demoBtn').addEventListener('click', function () {
       console.log('FORGE läuft ✓');
       console.info('Bereit für deinen Code.');
-    }
+    });
     console.log('Sandbox gestartet.');
   <\/script>
 </body>
