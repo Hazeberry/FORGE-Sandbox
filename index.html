@@ -490,6 +490,7 @@
   <button class="btn" id="btnGoto" aria-label="Zur Zeile springen">→</button>
   <div class="toolbar-sep"></div>
   <button class="btn" id="btnAnalyse" aria-label="Code analysieren">🔍 Analyse</button>
+  <span id="saveStatus" aria-live="polite" style="margin-left:auto;font-size:11px;color:#6b7a99;white-space:nowrap;"></span>
 </div>
 
 <!-- ── WORKSPACE ───────────────────────────────────────────── -->
@@ -551,6 +552,13 @@ const AUTORUN_KEY   = 'forge_v3_autorun';
 const MAX_LOG_LINES = 200;
 const LOOP_TIMEOUT  = 4000;  // großzügig: GC-Pausen/Render-Hänger auf schwachen Geräten überbrücken
 const LOOP_ITER_MAX = 2000000;
+// FIX v2 (Regression aus dem letzten Fix): __forge_iter allein reicht nicht,
+// wenn er pro Frame genullt wird -> ein Loop mit knapp unter LOOP_ITER_MAX
+// Iterationen pro Frame lief unbegrenzt durch (900 Mio. Iterationen in einem
+// Test ungestoppt). Zweiter, NIE zurückgesetzter Zähler begrenzt die
+// Gesamtlast über die gesamte Sitzung, unabhängig davon, wie fein der
+// Angriffscode seine Arbeit auf einzelne Frames aufteilt.
+const LOOP_ITER_BUDGET = 200000000;
 
 const VOID_TAGS = new Set([
   'area','base','br','col','embed','hr','img','input',
@@ -637,10 +645,15 @@ function findMatchingParen(code, start) {
 }
 
 function injectLoopGuard(code) {
-  const GUARD = 'if(++window.__forge_iter>' + LOOP_ITER_MAX + ')throw new Error("FORGE: Endlosschleife erkannt");';
-  const insertAt = [];
-
+  const GUARD = 'if((++window.__forge_iter>' + LOOP_ITER_MAX + ')||(++window.__forge_iter_total>' + LOOP_ITER_BUDGET + '))throw new Error("FORGE: Endlosschleife erkannt");';
   const stripped = stripStringsAndComments(code);
+
+  // Sammelt {startPos, endPos, needsBraces} für jede gefundene Loop-Stelle.
+  // startPos = wo der Guard eingefügt werden soll (direkt nach öffnender Klammer/Doppelpunkt)
+  // needsBraces = true, wenn der Loop-Body kein { hat (klammerloser Single-Statement-Body,
+  // typisch für minifizierten/kompakten Code wie "for(;i<9;i++)x++;") -> muss in { } gehüllt werden,
+  // sonst würde der eingefügte Guard-Code Teil einer anderen Struktur werden oder gar nicht laufen.
+  const insertions = [];
 
   const reWF = /\b(while|for)\s*(?=\()/g;
   let m;
@@ -649,17 +662,37 @@ function injectLoopGuard(code) {
     if (parenEnd === -1) continue;
     let k = parenEnd + 1;
     while (k < stripped.length && /\s/.test(stripped[k])) k++;
-    if (stripped[k] === '{') insertAt.push(k + 1);
+    if (stripped[k] === '{') {
+      insertions.push({ start: k + 1, needsBraces: false });
+    } else if (k < stripped.length && stripped[k] !== ';') {
+      // Klammerloser Body: die Anweisung endet beim nächsten Top-Level-Semikolon
+      // (kein Semikolon in Strings/Kommentaren dank stripStringsAndComments, keins
+      // in verschachtelten Klammern/Blöcken dank Tiefenzählung).
+      let depth = 0, e = k;
+      for (; e < stripped.length; e++) {
+        const c = stripped[e];
+        if (c === '(' || c === '{' || c === '[') depth++;
+        else if (c === ')' || c === '}' || c === ']') depth--;
+        else if (c === ';' && depth === 0) { e++; break; }
+      }
+      insertions.push({ start: k, end: e, needsBraces: true });
+    }
   }
 
   const reDo = /\bdo\s*\{/g;
   while ((m = reDo.exec(stripped)) !== null) {
-    insertAt.push(m.index + m[0].length);
+    insertions.push({ start: m.index + m[0].length, needsBraces: false });
   }
 
-  insertAt.sort((a, b) => b - a);
-  for (const pos of insertAt) {
-    code = code.substring(0, pos) + GUARD + code.substring(pos);
+  // Rückwärts einfügen, damit frühere Positionen gültig bleiben
+  insertions.sort((a, b) => b.start - a.start);
+  for (const ins of insertions) {
+    if (ins.needsBraces) {
+      const body = code.substring(ins.start, ins.end);
+      code = code.substring(0, ins.start) + '{' + GUARD + body + '}' + code.substring(ins.end);
+    } else {
+      code = code.substring(0, ins.start) + GUARD + code.substring(ins.start);
+    }
   }
   return code;
 }
@@ -674,6 +707,7 @@ function instrumentLoops(src) {
 // ── BRIDGE ─────────────────────────────────────────────────────
 const BRIDGE = `<script>(function(){
   window.__forge_iter = 0;
+  window.__forge_iter_total = 0; // FIX: bewusst NIE zurückgesetzt (Session-Budget)
 
   // localStorage/sessionStorage-Ersatz: Das iframe läuft ohne 'allow-same-origin'
   // (Sicherheit!), echtes localStorage wirft daher SecurityError und bricht den
@@ -726,12 +760,17 @@ const BRIDGE = `<script>(function(){
   // also bleibt der Loop-Schutz erhalten – aber saubere rAF-Animationen
   // lösen keinen Fehlalarm mehr aus.
   function hb(){ try { window.parent.postMessage({type:'forge-hb'},'*'); } catch(e){} }
-  // FIX: Zähler hier zurücksetzen. Ohne Reset akkumuliert __forge_iter über
-  // die GESAMTE Laufzeit statt pro Frame -> ein Canvas-Loop mit z.B. 1000
-  // Array-Iterationen/Frame träfe LOOP_ITER_MAX nach wenigen Sekunden, obwohl
-  // der Thread nie blockiert war. Reset an rAF geknüpft (nicht an setInterval):
-  // rAF feuert nur, wenn der Thread tatsächlich frei war -> bei echter
-  // Blockade bleibt der Zähler ungenullt und der Guard greift weiterhin.
+  // FIX: __forge_iter (pro-Tick-Zähler) hier zurücksetzen -> ein Canvas-Loop mit
+  // z.B. 1000 Array-Iterationen/Frame löst keinen Fehlalarm mehr aus, weil er
+  // nie in einem einzelnen synchronen Tick LOOP_ITER_MAX erreicht. Reset an
+  // rAF geknüpft (nicht an setInterval): rAF feuert nur, wenn der Thread
+  // tatsächlich frei war -> bei echter Blockade bleibt der Zähler ungenullt
+  // und der Guard greift weiterhin.
+  // __forge_iter_total (Session-Budget) wird bewusst NICHT zurückgesetzt –
+  // sonst könnte Code, der seine Arbeit fein genug auf einzelne Frames
+  // aufteilt (jeweils knapp unter LOOP_ITER_MAX), unbegrenzt weiterlaufen
+  // und die CPU dauerhaft auslasten (siehe Regressionstest: 900 Mio.
+  // Iterationen liefen mit reinem Pro-Frame-Reset ungestoppt durch).
   function hbRaf(){ window.__forge_iter = 0; hb(); requestAnimationFrame(hbRaf); }
   requestAnimationFrame(hbRaf);
   setInterval(hb, 500);
@@ -771,12 +810,22 @@ function runCode() {
   startWatchdog();
 }
 
+let saveStatusTimer = null;
 function saveCode() {
+  const el = document.getElementById('saveStatus');
   try {
     localStorage.setItem(STORAGE_KEY, editor.value);
+    el.textContent = '✓ gespeichert';
+    el.style.color = '#4ecca3';
   } catch (e) {
     addLog('warn', '⚠ localStorage voll – Code nicht gespeichert: ' + e.message);
+    el.textContent = '⚠ nicht gespeichert!';
+    el.style.color = 'var(--err)';
+    showToast('⚠ Speichern fehlgeschlagen – Code geht bei Reload verloren', true);
+    return; // Fehleranzeige bleibt stehen, kein Auto-Verblassen
   }
+  clearTimeout(saveStatusTimer);
+  saveStatusTimer = setTimeout(() => { el.textContent = ''; }, 1500);
 }
 
 // ── ONE-PASS CHARACTER TOKENIZER ───────────────────────────────
