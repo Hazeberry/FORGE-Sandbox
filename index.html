@@ -432,9 +432,16 @@
     <h3>🔑 Anthropic API Key</h3>
     <p>Für die Code-Analyse wird die Claude API benötigt.<br>
        Den Key findest du unter <strong>console.anthropic.com</strong>.<br>
-       Er wird nur lokal gespeichert (localStorage).</p>
+       Er wird nur lokal gespeichert (localStorage) – unverschlüsselt und
+       zeitlich unbegrenzt. Jede Browser-Extension mit Seitenzugriff kann ihn
+       auslesen.</p>
+    <p style="margin-top:8px;font-size:11px;opacity:.85">
+       Empfehlung: eigenen Key mit <strong>Spending-Limit</strong> nutzen
+       (console.anthropic.com → Limits) statt des Haupt-Keys.
+    </p>
     <input id="apiKeyInput" type="password" placeholder="sk-ant-…" aria-label="API Key eingeben" autocomplete="off">
     <div class="modal-actions">
+      <button class="btn" id="apiKeyClear" style="margin-right:auto">Key löschen</button>
       <button class="btn" id="apiKeyCancel">Abbrechen</button>
       <button class="btn btn-run" id="apiKeySave">Speichern &amp; Analysieren</button>
     </div>
@@ -719,7 +726,13 @@ const BRIDGE = `<script>(function(){
   // also bleibt der Loop-Schutz erhalten – aber saubere rAF-Animationen
   // lösen keinen Fehlalarm mehr aus.
   function hb(){ try { window.parent.postMessage({type:'forge-hb'},'*'); } catch(e){} }
-  function hbRaf(){ hb(); requestAnimationFrame(hbRaf); }
+  // FIX: Zähler hier zurücksetzen. Ohne Reset akkumuliert __forge_iter über
+  // die GESAMTE Laufzeit statt pro Frame -> ein Canvas-Loop mit z.B. 1000
+  // Array-Iterationen/Frame träfe LOOP_ITER_MAX nach wenigen Sekunden, obwohl
+  // der Thread nie blockiert war. Reset an rAF geknüpft (nicht an setInterval):
+  // rAF feuert nur, wenn der Thread tatsächlich frei war -> bei echter
+  // Blockade bleibt der Zähler ungenullt und der Guard greift weiterhin.
+  function hbRaf(){ window.__forge_iter = 0; hb(); requestAnimationFrame(hbRaf); }
   requestAnimationFrame(hbRaf);
   setInterval(hb, 500);
 })();<\/script>`;
@@ -1247,6 +1260,17 @@ function renderDiagnostics(issues) {
     return;
   }
 
+  // FIX: API-Antwort ist nicht vertrauenswürdig (analysiert fremden Code →
+  // Prompt-Injection möglich). severity gegen Whitelist, line hart zu Integer –
+  // vorher lief iss.line ungeprüft in ein HTML-Attribut (Attribut-Injection).
+  const VALID_SEV = ['error', 'warning', 'info']; // Array statt Objekt: kein Prototype-Lookup
+  issues = issues.map(iss => ({
+    line: Number.isInteger(Math.trunc(+iss.line)) && +iss.line > 0 ? Math.trunc(+iss.line) : 0,
+    severity: VALID_SEV.includes(iss.severity) ? iss.severity : 'info',
+    message: String(iss.message || ''),
+    suggestion: iss.suggestion ? String(iss.suggestion) : ''
+  }));
+
   const sev = { error: 3, warning: 2, info: 1 };
   gutterIssues = {};
   issues.forEach(iss => {
@@ -1264,11 +1288,11 @@ function renderDiagnostics(issues) {
 
   const icons = { error: '✖', warning: '⚠', info: 'ℹ' };
   analysePanel.innerHTML = issues.map((iss, idx) => `
-    <div class="diag-entry sev-${escHtml(iss.severity || 'info')}" data-line="${iss.line || 0}" data-idx="${idx}">
-      <span class="diag-icon">${icons[iss.severity] || '·'}</span>
+    <div class="diag-entry sev-${iss.severity}" data-line="${iss.line}" data-idx="${idx}">
+      <span class="diag-icon">${icons[iss.severity]}</span>
       <div class="diag-body">
         <div class="diag-loc">Zeile ${iss.line || '?'}</div>
-        <div class="diag-msg">${escHtml(iss.message || '')}</div>
+        <div class="diag-msg">${escHtml(iss.message)}</div>
         ${iss.suggestion ? `<div class="diag-sug">→ ${escHtml(iss.suggestion)}</div>` : ''}
       </div>
     </div>`).join('');
@@ -1317,6 +1341,9 @@ Max 12 Einträge. Wichtigstes zuerst. Kein Problem gefunden → [].`;
     if (apiKey) {
       headers['x-api-key'] = apiKey;
       headers['anthropic-version'] = '2023-06-01';
+      // FIX: Ohne diesen Header lehnt die API Browser-CORS-Requests mit 401
+      // ab, der 401-Handler unten öffnete dann fälschlich das Key-Modal.
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
     }
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1370,6 +1397,11 @@ function showApiKeyModal() {
 
 document.getElementById('apiKeyCancel').addEventListener('click', () => {
   document.getElementById('apiModal').classList.remove('open');
+});
+document.getElementById('apiKeyClear').addEventListener('click', () => {
+  localStorage.removeItem('forge_api_key');
+  document.getElementById('apiKeyInput').value = '';
+  showToast('✓ Key gelöscht');
 });
 document.getElementById('apiKeySave').addEventListener('click', () => {
   const key = document.getElementById('apiKeyInput').value.trim();
@@ -1709,4 +1741,4 @@ runCode();
 addLog('info', 'FORGE bereit · v3.1');
 </script>
 </body>
-</html>
+  </html>
