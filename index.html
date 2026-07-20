@@ -777,6 +777,20 @@ const BRIDGE = `<script>(function(){
 })();<\/script>`;
 
 // ── RUN ────────────────────────────────────────────────────────
+// FIX: Ziel-Frame zentral wählen. Vorher schrieb runCode (z.B. via Auto-Run-
+// Debounce) bei offenem Vollbild in die versteckte Haupt-Vorschau; beim
+// Schließen stellte closeFullscreen dann den ALTEN Stand aus fsSavedSrc
+// wieder her und überschrieb den neuen Lauf. deploySrc() hält fsSavedSrc
+// bei offenem Vollbild synchron mit, statt blind preview.srcdoc zu setzen.
+function deploySrc(finalSrc) {
+  if (fsOverlay.classList.contains('open')) {
+    fsSavedSrc = finalSrc;
+    fsFrame.srcdoc = finalSrc;
+  } else {
+    preview.srcdoc = finalSrc;
+  }
+}
+
 function runCode() {
   clearTimeout(runDebounce);
   let src = instrumentLoops(editor.value);
@@ -794,17 +808,17 @@ function runCode() {
     } else if (doc.body) {
       doc.body.insertBefore(bridgeScript, doc.body.firstChild);
     } else {
-      preview.srcdoc = BRIDGE + src;
+      deploySrc(BRIDGE + src);
       startWatchdog();
       return;
     }
 
-    preview.srcdoc = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    deploySrc('<!DOCTYPE html>\n' + doc.documentElement.outerHTML);
   } catch (e) {
     if (/<head\b[^>]*>/i.test(src))  src = src.replace(/(<head\b[^>]*>)/i, '$1' + BRIDGE);
     else if (/<body\b[^>]*>/i.test(src))  src = src.replace(/(<body\b[^>]*>)/i, '$1' + BRIDGE);
     else                                   src = BRIDGE + src;
-    preview.srcdoc = src;
+    deploySrc(src);
   }
 
   startWatchdog();
