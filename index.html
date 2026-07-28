@@ -160,6 +160,11 @@
       resize: none;
       outline: none;
       z-index: 2;
+      /* FIX (Mobile): Wischen auf der Textarea wurde als Textauswahl-/Caret-Geste
+         statt als Scroll interpretiert (Zeilennummern zogen mit, farbiger Code nicht).
+         Explizites pan-x pan-y priorisiert natives Scrollen in BEIDE Richtungen –
+         pan-y allein würde horizontales Scrollen langer Zeilen deaktivieren. */
+      touch-action: pan-x pan-y;
     }
     #hlOverlay {
       color: #c8d8f8;
