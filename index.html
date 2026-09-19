@@ -64,6 +64,14 @@
       flex-shrink: 0;
     }
     .btn:hover { background: #2a3545; }
+    /* A11y: klar sichtbarer Tastatur-Fokus (nur bei Keyboard-Navigation). */
+    .btn:focus-visible, .tab-btn:focus-visible, #resizeHandle:focus-visible,
+    .diag-entry:focus-visible, #autoRun:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    #resizeHandle:focus-visible { outline-offset: -2px; background: var(--accent); }
+    .diag-entry:focus-visible { outline-offset: -2px; }
     .btn-run { background: var(--accent); color: #000; font-weight: 700; border: none; }
     .btn-run:hover { background: #00b359; }
     .btn-danger { color: var(--err); }
@@ -71,7 +79,7 @@
     .toolbar-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
     .auto-label {
       display: flex; align-items: center; gap: 5px;
-      font-size: 12px; color: #6b7a99; cursor: pointer;
+      font-size: 12px; color: #808ea4; cursor: pointer;
       white-space: nowrap; flex-shrink: 0;
     }
     .auto-label input { accent-color: var(--accent); }
@@ -94,7 +102,7 @@
       height: 32px; background: #131920; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 12px; font-size: 10px; text-transform: uppercase;
-      letter-spacing: 0.12em; color: #4b5a72; flex-shrink: 0;
+      letter-spacing: 0.12em; color: #808ea4; flex-shrink: 0;
     }
     .editor-area { flex: 1; display: flex; overflow: hidden; position: relative; min-height: 0; }
     #lineNums {
@@ -102,7 +110,7 @@
       font-family: 'Fragment Mono', 'Fira Code', monospace;
       font-size: var(--editor-font-size);
       line-height: 1.65; text-align: right;
-      color: #374357; background: #0c1017;
+      color: #6f7d95; background: #0c1017;
       user-select: none; white-space: pre; overflow: hidden;
       flex-shrink: 0; border-right: 1px solid var(--border);
     }
@@ -212,7 +220,7 @@
     }
     .tab-btn {
       background: none; border: none; border-bottom: 2px solid transparent;
-      color: #4b5a72; padding: 6px 14px; font-size: 10px;
+      color: #808ea4; padding: 6px 14px; font-size: 10px;
       text-transform: uppercase; letter-spacing: 0.12em;
       cursor: pointer; font-family: inherit;
     }
@@ -238,9 +246,9 @@
     .diag-entry:hover { background: #0f141c; }
     .diag-icon { font-size: 11px; flex-shrink: 0; padding-top: 1px; }
     .diag-body { flex: 1; min-width: 0; }
-    .diag-loc  { font-size: 10px; color: #4b5a72; margin-bottom: 2px; }
+    .diag-loc  { font-size: 10px; color: #808ea4; margin-bottom: 2px; }
     .diag-msg  { font-size: 11px; font-family: 'Fragment Mono', monospace; word-break: break-word; }
-    .diag-sug  { font-size: 10px; color: #4b5a72; margin-top: 3px; font-style: italic; }
+    .diag-sug  { font-size: 10px; color: #808ea4; margin-top: 3px; font-style: italic; }
     .diag-entry.sev-error   .diag-icon,
     .diag-entry.sev-error   .diag-msg  { color: var(--err); }
     .diag-entry.sev-warning .diag-icon,
@@ -292,7 +300,7 @@
 </head>
 <body>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="apiModal" role="dialog" aria-modal="true" aria-label="Anthropic API Key">
   <div class="modal-box">
@@ -372,7 +380,7 @@
           aria-label="Code Editor" aria-multiline="true"></textarea>
       </div>
     </div>
-    <div id="resizeHandle" role="separator" aria-label="Konsolengröße anpassen"></div>
+    <div id="resizeHandle" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Konsolengröße anpassen (Pfeil hoch/runter)"></div>
     <div id="consolePane" aria-label="Konsole">
       <div class="console-tabs">
         <button class="tab-btn active" id="tabConsole">Konsole</button>
@@ -1451,7 +1459,8 @@ function openConfirm(title, body, actionLabel, action) {
   modal.querySelector('p').textContent = body;
   document.getElementById('confirmDelete').textContent = actionLabel;
   pendingConfirmAction = action;
-  modal.classList.add('open');
+  // Fokus auf die sichere Aktion (Abbrechen), nicht auf die destruktive.
+  openModal(modal, document.getElementById('confirmCancel'));
 }
 
 function requestClearCode() {
@@ -1475,11 +1484,49 @@ function clearCode() {
 }
 
 document.getElementById('confirmCancel').addEventListener('click', () => {
-  document.getElementById('confirmModal').classList.remove('open');
   pendingConfirmAction = null;
+  closeModal(document.getElementById('confirmModal'));
 });
 document.getElementById('confirmDelete').addEventListener('click', () => {
   if (pendingConfirmAction) pendingConfirmAction();
+});
+
+// ── MODAL-A11Y (Fokus-Trap, Escape, Backdrop, Fokus-Restore) ──
+let modalLastFocus = null;
+function modalFocusables(modal) {
+  return Array.from(modal.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )).filter(el => !el.disabled && el.offsetParent !== null);
+}
+function openModal(modal, initial) {
+  modalLastFocus = document.activeElement;
+  modal.classList.add('open');
+  const f = initial || modalFocusables(modal)[0];
+  if (f) setTimeout(() => f.focus(), 50);
+}
+function closeModal(modal) {
+  modal.classList.remove('open');
+  if (modalLastFocus && typeof modalLastFocus.focus === 'function') modalLastFocus.focus();
+  modalLastFocus = null;
+}
+['apiModal', 'confirmModal'].forEach(id => {
+  const modal = document.getElementById(id);
+  // Backdrop-Klick schließt (nur Klick direkt auf das Overlay, nicht die Box).
+  modal.addEventListener('mousedown', e => { if (e.target === modal) closeModal(modal); });
+  modal.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (id === 'confirmModal') pendingConfirmAction = null;
+      closeModal(modal);
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const f = modalFocusables(modal);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 });
 
 // ── EXPORT ────────────────────────────────────────────────────
@@ -1631,7 +1678,7 @@ function renderDiagnostics(issues) {
 
   const icons = { error: '✖', warning: '⚠', info: 'ℹ' };
   analysePanel.innerHTML = issues.map((iss, idx) => `
-    <div class="diag-entry sev-${iss.severity}" data-line="${iss.line}" data-idx="${idx}">
+    <div class="diag-entry sev-${iss.severity}" data-line="${iss.line}" data-idx="${idx}" role="button" tabindex="0" aria-label="${escHtml(iss.severity)}, Zeile ${iss.line || '?'}: ${escHtml(iss.message)}">
       <span class="diag-icon">${icons[iss.severity]}</span>
       <div class="diag-body">
         <div class="diag-loc">Zeile ${iss.line || '?'}</div>
@@ -1641,9 +1688,13 @@ function renderDiagnostics(issues) {
     </div>`).join('');
 
   analysePanel.querySelectorAll('.diag-entry').forEach(el => {
-    el.addEventListener('click', () => {
+    const go = () => {
       const line = parseInt(el.dataset.line);
       if (line > 0) gotoLineByNum(line);
+    };
+    el.addEventListener('click', go);
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
     });
   });
 }
@@ -1770,12 +1821,11 @@ function showApiKeyModal() {
   const modal = document.getElementById('apiModal');
   const input = document.getElementById('apiKeyInput');
   input.value = lsGet(APIKEY_KEY) || '';
-  modal.classList.add('open');
-  setTimeout(() => input.focus(), 50);
+  openModal(modal, input);
 }
 
 document.getElementById('apiKeyCancel').addEventListener('click', () => {
-  document.getElementById('apiModal').classList.remove('open');
+  closeModal(document.getElementById('apiModal'));
 });
 document.getElementById('apiKeyClear').addEventListener('click', () => {
   lsDel(APIKEY_KEY);
@@ -1786,12 +1836,12 @@ document.getElementById('apiKeySave').addEventListener('click', () => {
   const key = document.getElementById('apiKeyInput').value.trim();
   if (!key) { document.getElementById('apiKeyInput').focus(); return; }
   lsSet(APIKEY_KEY, key);
-  document.getElementById('apiModal').classList.remove('open');
+  closeModal(document.getElementById('apiModal'));
   analyseCode();
 });
 document.getElementById('apiKeyInput').addEventListener('keydown', e => {
+  // Escape/Tab behandelt der Modal-Handler (Fokus-Trap + Fokus-Restore).
   if (e.key === 'Enter') document.getElementById('apiKeySave').click();
-  if (e.key === 'Escape') document.getElementById('apiKeyCancel').click();
 });
 
 // ── TOAST ─────────────────────────────────────────────────────
@@ -2113,6 +2163,22 @@ resizeHandle.addEventListener('touchstart', e => {
   beginResize(e.touches[0].clientY);
 }, { passive: false });
 
+// A11y: mit Pfeil hoch/runter (Shift = größere Schritte) per Tastatur ziehen.
+resizeHandle.addEventListener('keydown', e => {
+  let dir = 0;
+  if (e.key === 'ArrowUp') dir = 1;
+  else if (e.key === 'ArrowDown') dir = -1;
+  else return;
+  e.preventDefault();
+  const step = (e.shiftKey ? 48 : 16) * dir;
+  rzY = 0;
+  rzH = isVerticalLayout()
+    ? colEditor.getBoundingClientRect().height
+    : consolePane.getBoundingClientRect().height;
+  applyResize(-step); // (rzY - clientY) = step  ->  Höhe += step
+  saveCurrentLayoutSizes();
+});
+
 function applyResize(clientY) {
   if (isVerticalLayout()) {
     const h = Math.max(80, Math.min(window.innerHeight * 0.9, rzH + (rzY - clientY)));
@@ -2269,7 +2335,7 @@ function boot() {
 
   const astStatus = window.acorn ? 'AST-Guard' : 'Regex-Guard';
   const hlStatus  = hlSyncMode ? 'Sync-Highlighter' : 'Worker-Highlighter';
-  addLog('info', 'FORGE bereit · v3.9 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
+  addLog('info', 'FORGE bereit · v4.0 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
   // Acorn ist inline vendored -> window.acorn ist normalerweise immer da.
   // Falls der Inline-Block je fehlt/beschaedigt ist, faellt der Loop-Guard auf
   // die schwaechere Regex-Variante zurueck; das darf nicht still passieren.
