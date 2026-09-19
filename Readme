@@ -3,7 +3,7 @@ https://hazeberry.github.io/FORGE-Sandbox/
 
 > A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection, and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
 
-**Current version: v4.1**
+**Current version: v4.2**
 
 ---
 
