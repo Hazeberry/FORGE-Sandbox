@@ -3,7 +3,7 @@ https://hazeberry.github.io/FORGE-Sandbox/
 
 > A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection, and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
 
-**Current version: v4.0**
+**Current version: v4.2**
 
 ---
 
@@ -37,7 +37,7 @@ It was built to be the sandbox you'd actually want to use: fast, honest about wh
 - **Infinite-loop protection** on two independent levels:
   - *AST loop instrumentation* — the vendored Acorn parser walks the code and injects an iteration/time guard into **every** loop body (`while`, `for`, `do…while`, `for…in`, `for…of`, `for await`). The guard throws when a single synchronous tick runs longer than ~2 s or exceeds 50 M iterations (the per-tick counter resets each animation frame, so legitimate long-running animations are fine). If the parser is ever unavailable, a regex-based instrumenter takes over and the console says so.
   - *Parent-thread watchdog* — monitors iframe heartbeats every 200 ms; if the iframe thread stays frozen for more than 6 s, the parent kills it from outside (the only approach that works for an already-blocked thread).
-  - *Background-tab safe* — the watchdog pauses while `document.hidden` to avoid false positives.
+  - *False-positive safe* — the watchdog pauses while the tab is hidden (`document.hidden`) and while a blocking dialog (`alert` / `confirm` / `prompt`) is open, so neither is mistaken for a frozen thread.
 - **Parser-based script instrumentation** — scripts are located with `DOMParser`, not a tag regex, so crafted end tags (`</script x>`) or innocent `src`-like attributes can't slip past the loop guard.
 - **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock allow-forms allow-downloads`, **no `allow-same-origin`** (the preview cannot reach the parent's storage or DOM). `localStorage`/`sessionStorage` inside the sandbox are transparently shimmed with an in-memory store so code that uses them runs without SecurityErrors.
 - **postMessage source check** — only messages from the preview / fullscreen iframe windows are accepted.
@@ -122,6 +122,11 @@ Injecting a Worker inside the iframe to detect a frozen thread doesn't work: a b
 ### Single file, one vendored dependency
 
 FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-party library — the Acorn parser — is vendored inline, so the entire application (HTML, CSS, JavaScript, highlighter, loop guard, AI analysis) is a single file you can inspect, fork, and audit completely, and it runs with no network access at all until you ask it to analyse your code.
+
+### Known limits
+
+- **Off-main-thread code isn't guarded.** The loop guard instruments inline scripts, and the watchdog watches the iframe's main thread. Code that runs elsewhere — a `Web Worker` or a nested iframe with its own infinite loop — won't trip either mechanism; it just burns CPU on its own thread until you re-run or close the preview, which tears the iframe (and its workers) down. This is a deliberate scope limit, not a hang: the page stays responsive.
+- **A single legitimate synchronous burst >6 s still trips the watchdog** if it isn't a loop (e.g. a giant synchronous computation with no `await`/animation-frame yield). Break long work across frames to avoid it.
 
 ---
 

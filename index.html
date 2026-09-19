@@ -477,6 +477,7 @@ let lastLineCount  = 0;
 let tabCapture     = true;
 let lastHeartbeat  = Date.now();
 let watchdogTimer  = null;
+let dialogOpen     = false; // blockierender alert()/confirm()/prompt() im iframe
 let gutterIssues   = {};
 let analyseBusy    = false;
 let analyseAbort   = null;
@@ -508,13 +509,21 @@ function killIframe(f) {
 
 function startWatchdog() {
   lastHeartbeat = Date.now();
+  dialogOpen = false; // frischer Lauf -> evtl. hängengebliebenen Dialog-Status verwerfen
   clearInterval(watchdogTimer);
   watchdogTimer = setInterval(() => {
     if (document.hidden) { lastHeartbeat = Date.now(); return; }
+    // Ein blockierender alert()/confirm()/prompt() hält den iframe-Thread
+    // legitim an -> kein Fehlalarm, solange der Dialog offen ist.
+    if (dialogOpen) { lastHeartbeat = Date.now(); return; }
     if (Date.now() - lastHeartbeat <= LOOP_TIMEOUT) return;
 
     clearInterval(watchdogTimer);
     watchdogTimer = null;
+
+    // Nach einem Kill darf ein späteres closeFullscreen NICHT den
+    // Endlos-Code aus fsSavedSrc wiederherstellen (sonst neuer Timeout).
+    fsSavedSrc = '';
 
     const fsOpen = fsOverlay.classList.contains('open');
     if (fsOpen) fsFrame = killIframe(fsFrame);
@@ -663,7 +672,7 @@ function isExecutableJs(type) {
 }
 
 // ── BRIDGE (einzeilig!) ───────────────────────────────────────
-const BRIDGE_BODY = '(function(){window.__forge_iter=0;window.__forge_iter_total=0;window.__forge_t0=performance.now();(function(){function M(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},setItem:function(k,v){d[k]=String(v);},removeItem:function(k){delete d[k];},clear:function(){d={};},key:function(i){return Object.keys(d)[i]||null;},get length(){return Object.keys(d).length;}};}function si(n){try{window[n].getItem("__p__");}catch(e){try{Object.defineProperty(window,n,{value:M(),configurable:true});}catch(_){}}}si("localStorage");si("sessionStorage");})();var _p=function(l,a){try{var m=Array.from(a).map(function(x){if(x instanceof Error)return x.toString();if(x!==null&&typeof x==="object"){try{return JSON.stringify(x,null,2);}catch(e){return String(x);}}return String(x);}).join(" ");window.parent.postMessage({type:"forge-log",level:l,msg:m},"*");}catch(e){}};["log","warn","error","info"].forEach(function(n){var o=console[n].bind(console);console[n]=function(){o.apply(console,arguments);_p(n,arguments);};});window.addEventListener("error",function(e){_p("error",["⚠ "+e.message+" (Zeile "+e.lineno+")"]);hb();});window.addEventListener("unhandledrejection",function(e){_p("error",["⚠ Promise: "+(e.reason&&e.reason.message||e.reason)]);});function hb(){try{window.parent.postMessage({type:"forge-hb"},"*");}catch(e){}}function hbRaf(){window.__forge_iter=0;window.__forge_t0=performance.now();hb();requestAnimationFrame(hbRaf);}requestAnimationFrame(hbRaf);setInterval(hb,500);})();';
+const BRIDGE_BODY = '(function(){window.__forge_iter=0;window.__forge_iter_total=0;window.__forge_t0=performance.now();(function(){function M(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},setItem:function(k,v){d[k]=String(v);},removeItem:function(k){delete d[k];},clear:function(){d={};},key:function(i){return Object.keys(d)[i]||null;},get length(){return Object.keys(d).length;}};}function si(n){try{window[n].getItem("__p__");}catch(e){try{Object.defineProperty(window,n,{value:M(),configurable:true});}catch(_){}}}si("localStorage");si("sessionStorage");})();["alert","confirm","prompt"].forEach(function(n){var o=window[n];if(typeof o!=="function")return;window[n]=function(){try{window.parent.postMessage({type:"forge-dialog",state:"open"},"*");}catch(e){}try{return o.apply(window,arguments);}finally{window.__forge_t0=performance.now();try{window.parent.postMessage({type:"forge-dialog",state:"close"},"*");}catch(e){}}};});var _p=function(l,a){try{var m=Array.from(a).map(function(x){if(x instanceof Error)return x.toString();if(x!==null&&typeof x==="object"){try{return JSON.stringify(x,null,2);}catch(e){return String(x);}}return String(x);}).join(" ");window.parent.postMessage({type:"forge-log",level:l,msg:m},"*");}catch(e){}};["log","warn","error","info"].forEach(function(n){var o=console[n].bind(console);console[n]=function(){o.apply(console,arguments);_p(n,arguments);};});window.addEventListener("error",function(e){_p("error",["⚠ "+e.message+" (Zeile "+e.lineno+")"]);hb();});window.addEventListener("unhandledrejection",function(e){_p("error",["⚠ Promise: "+(e.reason&&e.reason.message||e.reason)]);});function hb(){try{window.parent.postMessage({type:"forge-hb"},"*");}catch(e){}}function hbRaf(){window.__forge_iter=0;window.__forge_t0=performance.now();hb();requestAnimationFrame(hbRaf);}requestAnimationFrame(hbRaf);setInterval(hb,500);})();';
 const BRIDGE_TAG = '<script>' + BRIDGE_BODY + '<' + '/script>';
 
 // ── PREVIEW-QUELLE BAUEN ──────────────────────────────────────
@@ -824,7 +833,14 @@ function highlighterWorkerMain() {
         if (/\d/.test(ch) && !/[a-zA-Z0-9_$]/.test(raw[i - 1] || '')) {
           flush('hl-js');
           let j = i;
-          while (j < len && /[\d.xXa-fA-FoObBn_eE+\-]/.test(raw[j])) j++;
+          while (j < len) {
+            const c = raw[j];
+            if (/[0-9a-fA-F.xXoObBn_]/.test(c)) { j++; continue; }
+            // Vorzeichen nur als Exponent zählen (1e-5), nie in Hex (0xE-1 = 0xE − 1)
+            if ((c === '+' || c === '-') && /[eE]/.test(raw[j - 1]) &&
+                !(raw[i] === '0' && (raw[i + 1] === 'x' || raw[i + 1] === 'X'))) { j++; continue; }
+            break;
+          }
           out += '<span class="hl-number">' + raw.substring(i, j) + '</span>';
           i = j; continue;
         }
@@ -1352,7 +1368,9 @@ function isInsideString(text, pos) {
 function getLastOpenTag(text) {
   const start = Math.max(0, text.length - LOOKBEHIND_LIMIT);
   const slice = text.slice(start);
-  const re = /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g;
+  // Attribut-Teil überspringt quotierte Werte, damit ein '>' in title="a>b"
+  // das Tag nicht vorzeitig beendet.
+  const re = /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
   const stack = [];
   let m;
   while ((m = re.exec(slice)) !== null) {
@@ -1367,6 +1385,13 @@ function getLastOpenTag(text) {
     } else { stack.push(t); }
   }
   return stack.length ? stack[stack.length - 1] : null;
+}
+
+// Ist die Position innerhalb eines offenen <script>-Blocks? (grobe, aber
+// ausreichende Prüfung für den Autocomplete-Guard.)
+function isInScript(textBefore) {
+  const lo = textBefore.toLowerCase();
+  return lo.lastIndexOf('<script') > lo.lastIndexOf('</script');
 }
 
 // ── UNDO-FÄHIGE EINFÜGUNG ─────────────────────────────────────
@@ -1437,11 +1462,14 @@ function setFontSize(px) {
 function addLog(level, msg) {
   while (consoleOut.children.length >= MAX_LOG_LINES)
     consoleOut.removeChild(consoleOut.firstChild);
+  // Nur automatisch nach unten scrollen, wenn der Nutzer ohnehin schon
+  // (fast) unten ist – sonst reißt es ihn beim Hochscrollen wieder runter.
+  const atBottom = consoleOut.scrollHeight - consoleOut.scrollTop - consoleOut.clientHeight < 24;
   const el = document.createElement('div');
   el.className = 'log-entry log-' + level;
   el.textContent = msg;
   consoleOut.appendChild(el);
-  consoleOut.scrollTop = consoleOut.scrollHeight;
+  if (atBottom) consoleOut.scrollTop = consoleOut.scrollHeight;
 }
 
 function clearConsole() {
@@ -1861,6 +1889,11 @@ window.addEventListener('message', e => {
     lastHeartbeat = Date.now();
     return;
   }
+  if (e.data.type === 'forge-dialog') {
+    dialogOpen = e.data.state === 'open';
+    lastHeartbeat = Date.now();
+    return;
+  }
   if (e.data.type === 'forge-log') {
     lastHeartbeat = Date.now();
     addLog(e.data.level, e.data.msg);
@@ -1927,7 +1960,10 @@ editor.addEventListener('input', (e) => {
   if (e.inputType === 'insertText') {
     const pos = editor.selectionStart;
     const before = editor.value.substring(0, pos);
-    if (before.endsWith('</') && !isInsideString(editor.value, pos - 2)) {
+    // String-Guard nur im JS-Kontext anwenden: in reinem HTML würde ein
+    // Apostroph (z. B. "don't") sonst fälschlich als String zählen und das
+    // Schließen-Tag-Autocomplete unterdrücken.
+    if (before.endsWith('</') && !(isInScript(before) && isInsideString(editor.value, pos - 2))) {
       const tag = getLastOpenTag(before.slice(0, -2));
       if (tag) {
         insertUndoable(tag + '>');
@@ -2040,6 +2076,19 @@ editor.addEventListener('keydown', e => {
     return;
   }
 
+  // Dedent: '}' auf einer reinen Whitespace-Zeile rückt eine Ebene zurück.
+  if (e.key === '}' && s === end && editor.value[s] !== '}') {
+    const ls  = editor.value.lastIndexOf('\n', s - 1) + 1;
+    const pre = editor.value.slice(ls, s);
+    if (pre.length > 0 && /^[ \t]*$/.test(pre)) {
+      const rem = ((pre.length - 1) % 4) + 1; // 1–4 Zeichen aufs 4er-Raster
+      e.preventDefault();
+      editor.setSelectionRange(s - rem, s);
+      insertUndoable('}');
+      return;
+    }
+  }
+
   if (CLOSE.has(e.key) && s === end && editor.value[s] === e.key) {
     e.preventDefault();
     editor.setSelectionRange(s + 1, s + 1); return;
@@ -2056,15 +2105,31 @@ editor.addEventListener('keydown', e => {
       insertUndoable(e.key);
       return;
     }
-    if (s === end && next === e.key) {
-      editor.setSelectionRange(s + 1, s + 1);
-    } else if (s !== end) {
+    if (s !== end) {
+      // Auswahl umschließen
       editor.setSelectionRange(s, end);
       insertUndoable(e.key + editor.value.substring(s, end) + e.key);
-    } else {
+      return;
+    }
+    // Über ein Anführungszeichen nur springen, wenn wir wirklich in einem
+    // String dieses Typs sind (ungerade Anzahl unescaped Zeichen ab Zeilenanfang).
+    // Verhindert das Überspringen VOR einem bestehenden String.
+    const lineStart = editor.value.lastIndexOf('\n', s - 1) + 1;
+    const lineToCur = editor.value.slice(lineStart, s);
+    let q = 0;
+    for (let i = 0; i < lineToCur.length; i++) {
+      if (lineToCur[i] === e.key && lineToCur[i - 1] !== '\\') q++;
+    }
+    const insideStr = q % 2 === 1;
+    if (next === e.key && insideStr) {
+      editor.setSelectionRange(s + 1, s + 1); // schließendes Zeichen überspringen
+    } else if (next === '' || /[\s)\]},;.]/.test(next)) {
+      // Auto-Paar nur, wenn rechts Platz/Satzzeichen ist – nicht vor Wort/Zeichen
       editor.setSelectionRange(s, s);
       insertUndoable(e.key + e.key);
       editor.setSelectionRange(s + 1, s + 1);
+    } else {
+      insertUndoable(e.key); // einzelnes Zeichen (z. B. vor bestehendem String/Wort)
     }
     return;
   }
@@ -2079,7 +2144,11 @@ editor.addEventListener('keydown', e => {
     const lineStart = before.lastIndexOf('\n') + 1;
     const line      = before.substring(lineStart);
     const indent    = (line.match(/^(\s*)/) || [''])[0];
-    const extra     = /[{(\[]\s*$/.test(line.trimEnd()) && !/\/\/.*[{(\[]\s*$/.test(line) ? '    ' : '';
+    // Öffnende Klammer am Zeilenende zählt auch mit nachgestelltem //-Kommentar
+    // ("if (x) { // TODO"), aber nicht, wenn die Klammer selbst im Kommentar steht.
+    const opensBlock = /[{(\[]\s*(\/\/.*)?$/.test(line.trimEnd())
+                    && !/\/\/.*[{(\[]\s*(\/\/.*)?$/.test(line);
+    const extra     = opensBlock ? '    ' : '';
     insertUndoable('\n' + indent + extra);
   }
 });
@@ -2189,19 +2258,30 @@ function applyResize(clientY) {
   }
 }
 
-document.addEventListener('mousemove', e => { if (resizing) applyResize(e.clientY); });
+function endResize() {
+  if (resizing) saveCurrentLayoutSizes();
+  resizing = false;
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+}
+document.addEventListener('mousemove', e => {
+  if (!resizing) return;
+  // Maustaste außerhalb des Fensters losgelassen -> mouseup kam nie an.
+  if (e.buttons === 0) { endResize(); return; }
+  applyResize(e.clientY);
+});
 document.addEventListener('touchmove', e => {
   if (!resizing) return;
   e.preventDefault();
   applyResize(e.touches[0].clientY);
 }, { passive: false });
-document.addEventListener('mouseup', () => {
+document.addEventListener('mouseup', endResize);
+window.addEventListener('blur', endResize); // Fokus/Fenster verloren -> Resize beenden
+document.addEventListener('touchend', () => {
   if (resizing) saveCurrentLayoutSizes();
   resizing = false;
-  document.body.style.userSelect = '';
-  document.body.style.cursor = '';
 });
-document.addEventListener('touchend', () => {
+document.addEventListener('touchcancel', () => {
   if (resizing) saveCurrentLayoutSizes();
   resizing = false;
 });
@@ -2335,7 +2415,7 @@ function boot() {
 
   const astStatus = window.acorn ? 'AST-Guard' : 'Regex-Guard';
   const hlStatus  = hlSyncMode ? 'Sync-Highlighter' : 'Worker-Highlighter';
-  addLog('info', 'FORGE bereit · v4.0 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
+  addLog('info', 'FORGE bereit · v4.2 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
   // Acorn ist inline vendored -> window.acorn ist normalerweise immer da.
   // Falls der Inline-Block je fehlt/beschaedigt ist, faellt der Loop-Guard auf
   // die schwaechere Regex-Variante zurueck; das darf nicht still passieren.
