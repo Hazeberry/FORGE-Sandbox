@@ -645,32 +645,47 @@ function injectLoopGuard(code, isModule) {
   return injectLoopGuardRegex(code);
 }
 
-function instrumentLoops(src) {
-  return src.replace(
-    /(<script\b(?![^>]*\bsrc\b)[^>]*>)([\s\S]*?)(<\/script>)/gi,
-    (_, open, body, close) => {
-      const isModule = /\btype\s*=\s*["']?module["']?/i.test(open);
-      return open + injectLoopGuard(body, isModule) + close;
-    }
-  );
+// Nur ausführbares JS instrumentieren – Datenblöcke wie
+// <script type="application/json"> oder Templates bleiben unberührt.
+function isExecutableJs(type) {
+  if (!type) return true;
+  type = type.trim().toLowerCase();
+  return type === 'module' ||
+         /^(text|application)\/(x-)?(java|ecma)script$/.test(type);
 }
 
 // ── BRIDGE (einzeilig!) ───────────────────────────────────────
 const BRIDGE_BODY = '(function(){window.__forge_iter=0;window.__forge_iter_total=0;window.__forge_t0=performance.now();(function(){function M(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},setItem:function(k,v){d[k]=String(v);},removeItem:function(k){delete d[k];},clear:function(){d={};},key:function(i){return Object.keys(d)[i]||null;},get length(){return Object.keys(d).length;}};}function si(n){try{window[n].getItem("__p__");}catch(e){try{Object.defineProperty(window,n,{value:M(),configurable:true});}catch(_){}}}si("localStorage");si("sessionStorage");})();var _p=function(l,a){try{var m=Array.from(a).map(function(x){if(x instanceof Error)return x.toString();if(x!==null&&typeof x==="object"){try{return JSON.stringify(x,null,2);}catch(e){return String(x);}}return String(x);}).join(" ");window.parent.postMessage({type:"forge-log",level:l,msg:m},"*");}catch(e){}};["log","warn","error","info"].forEach(function(n){var o=console[n].bind(console);console[n]=function(){o.apply(console,arguments);_p(n,arguments);};});window.addEventListener("error",function(e){_p("error",["⚠ "+e.message+" (Zeile "+e.lineno+")"]);hb();});window.addEventListener("unhandledrejection",function(e){_p("error",["⚠ Promise: "+(e.reason&&e.reason.message||e.reason)]);});function hb(){try{window.parent.postMessage({type:"forge-hb"},"*");}catch(e){}}function hbRaf(){window.__forge_iter=0;window.__forge_t0=performance.now();hb();requestAnimationFrame(hbRaf);}requestAnimationFrame(hbRaf);setInterval(hb,500);})();';
 const BRIDGE_TAG = '<script>' + BRIDGE_BODY + '<' + '/script>';
 
-function injectBridge(src) {
-  const headM = /<head\b[^>]*>/i.exec(src);
-  if (headM) {
-    const idx = headM.index + headM[0].length;
-    return src.slice(0, idx) + BRIDGE_TAG + src.slice(idx);
+// ── PREVIEW-QUELLE BAUEN ──────────────────────────────────────
+// FIX (M1/M2): Instrumentierung läuft über den HTML-Parser statt über
+// eine Script-Tag-Regex. Der Parser bestimmt Script-Grenzen und das
+// src-Attribut korrekt, daher greifen weder abgewandelte Script-Endtags
+// (Leerzeichen/Zeilenumbruch/Slash nach dem Namen) noch data-src bzw.
+// ein "src" im type-Wert mehr als Loop-Guard-Bypass.
+function buildPreviewSrc(raw) {
+  const doc = new DOMParser().parseFromString(raw, 'text/html');
+  if (!doc || !doc.documentElement) {
+    // Praktisch unerreichbar (text/html wirft nie); minimaler Notnagel.
+    return BRIDGE_TAG + raw;
   }
-  const bodyM = /<body\b[^>]*>/i.exec(src);
-  if (bodyM) {
-    const idx = bodyM.index + bodyM[0].length;
-    return src.slice(0, idx) + BRIDGE_TAG + src.slice(idx);
-  }
-  return BRIDGE_TAG + src;
+
+  doc.querySelectorAll('script:not([src])').forEach(s => {
+    const type = (s.getAttribute('type') || '').trim().toLowerCase();
+    if (!isExecutableJs(type)) return;
+    const code = s.textContent;
+    if (code) s.textContent = injectLoopGuard(code, type === 'module');
+  });
+
+  // Bridge als allererstes Script einhängen, damit die Zähler existieren,
+  // bevor instrumentierter User-Code läuft.
+  const bridge = doc.createElement('script');
+  bridge.textContent = BRIDGE_BODY;
+  const host = doc.head || doc.body || doc.documentElement;
+  host.insertBefore(bridge, host.firstChild);
+
+  return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 }
 
 // ── RUN ───────────────────────────────────────────────────────
@@ -686,8 +701,7 @@ function deploySrc(finalSrc) {
 
 function runCode() {
   clearTimeout(runDebounce);
-  const src = injectBridge(instrumentLoops(editor.value));
-  deploySrc(src);
+  deploySrc(buildPreviewSrc(editor.value));
   startWatchdog();
 }
 
@@ -2255,7 +2269,7 @@ function boot() {
 
   const astStatus = window.acorn ? 'AST-Guard' : 'Regex-Guard';
   const hlStatus  = hlSyncMode ? 'Sync-Highlighter' : 'Worker-Highlighter';
-  addLog('info', 'FORGE bereit · v3.8 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
+  addLog('info', 'FORGE bereit · v3.9 · ' + astStatus + ' · ' + hlStatus + ' · ' + editorFontSize + 'px');
   // Acorn ist inline vendored -> window.acorn ist normalerweise immer da.
   // Falls der Inline-Block je fehlt/beschaedigt ist, faellt der Loop-Guard auf
   // die schwaechere Regex-Variante zurueck; das darf nicht still passieren.
