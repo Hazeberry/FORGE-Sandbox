@@ -142,7 +142,7 @@
     }
 
     // 9 ─ Der AST-Guard wirft nach ~2000ms im Loop, die Seite bleibt am Leben.
-    //     Der Watchdog (4s) würde die Seite ersetzen, sollte aber gar nicht
+    //     Der Watchdog (6s) würde die Seite ersetzen, sollte aber gar nicht
     //     zum Zug kommen, weil der Loop-Guard früher greift.
     function t9_infiniteLoop() {
       log('⚠ 9 · Endlosschleife gestartet – Loop-Guard sollte in ~2s werfen…', 'warn');
