@@ -1,13 +1,15 @@
 https://hazeberry.github.io/FORGE-Sandbox/
 # FORGE · Code Sandbox
 
-> A zero-dependency, single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, loop protection, and AI-powered code analysis.
+> A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection, and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
+
+**Current version: v4.0**
 
 ---
 
 ## What is FORGE?
 
-FORGE is a **self-contained code playground** — one HTML file, no build step, no dependencies, no CDN. Open it in any browser and start writing HTML, CSS, and JavaScript with instant live preview.
+FORGE is a **self-contained code playground** — one HTML file you can open in any browser and start writing HTML, CSS, and JavaScript with instant live preview. There is nothing to install and no build step. The only third-party library, the [Acorn](https://github.com/acornjs/acorn) JavaScript parser, is **vendored inline** — so the file makes no CDN or network calls of its own; the sole outbound request is the AI analysis you trigger yourself.
 
 It was built to be the sandbox you'd actually want to use: fast, honest about what it does, and secure by default.
 
@@ -16,47 +18,59 @@ It was built to be the sandbox you'd actually want to use: fast, honest about wh
 ## Features
 
 ### Editor
-- **Syntax highlighting** via a character-by-character tokenizer — no regex runs on already-transformed text, no broken nested spans
-- **Line numbers** with color-coded gutter markers for code analysis results
+- **Syntax highlighting** via a character-by-character tokenizer that runs in a **Web Worker** (with a synchronous fallback) — no regex on already-transformed text, no broken nested spans, no main-thread jank on large files
+- **Line numbers** with color-coded gutter markers for code-analysis results
 - **Auto-indent** on Enter, detecting opening brackets
-- **Smart brackets & quotes** — auto-close `{}`, `[]`, `()`, `""`, `''`, ` `` ` with cursor placement; skip over existing closing characters; wrap selections
+- **Smart brackets & quotes** — auto-close `{}`, `[]`, `()`, `""`, `''`, `` `` `` with cursor placement; skip over existing closing characters; wrap selections
 - **Multi-line Tab / Shift+Tab** indentation
+- **Ctrl+/** to toggle line comments
+- **Ctrl+=/ Ctrl+- / Ctrl+0** to zoom the editor font (persisted)
 - **Ctrl+M** to toggle Tab between indentation and browser navigation
 - **HTML tag autocomplete** — type `</` to auto-close the last open tag
+- **Undo-friendly edits** — auto-insertions integrate with the browser's native undo stack
 - **Find & navigate** with match count, Prev/Next buttons, Enter/Shift+Enter, Escape to close
 - **Go to line** — jump to any line number
 
 ### Preview & Safety
-- **Live auto-run** with 850ms debounce (toggleable)
+- **Live auto-run** with a 900 ms debounce (toggleable)
 - **Ctrl+Enter** to run manually
-- **Infinite loop protection** on two levels:
-  - *Loop instrumentation* — `while`, `for`, and `do` bodies get an iteration counter injected before each run; throws after 2 million iterations
-  - *Parent-thread watchdog* — monitors iframe heartbeats every 200ms; if the iframe thread freezes for >2s, the parent kills it from outside (the only approach that actually works for a blocked thread)
-  - *Background-tab safe* — watchdog pauses when `document.hidden` to avoid false positives
-- **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock`, no `allow-same-origin` (prevents iframe from accessing parent storage or DOM)
-- **postMessage origin check** — only accepts messages from the preview iframe
+- **Infinite-loop protection** on two independent levels:
+  - *AST loop instrumentation* — the vendored Acorn parser walks the code and injects an iteration/time guard into **every** loop body (`while`, `for`, `do…while`, `for…in`, `for…of`, `for await`). The guard throws when a single synchronous tick runs longer than ~2 s or exceeds 50 M iterations (the per-tick counter resets each animation frame, so legitimate long-running animations are fine). If the parser is ever unavailable, a regex-based instrumenter takes over and the console says so.
+  - *Parent-thread watchdog* — monitors iframe heartbeats every 200 ms; if the iframe thread stays frozen for more than 6 s, the parent kills it from outside (the only approach that works for an already-blocked thread).
+  - *Background-tab safe* — the watchdog pauses while `document.hidden` to avoid false positives.
+- **Parser-based script instrumentation** — scripts are located with `DOMParser`, not a tag regex, so crafted end tags (`</script x>`) or innocent `src`-like attributes can't slip past the loop guard.
+- **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock allow-forms allow-downloads`, **no `allow-same-origin`** (the preview cannot reach the parent's storage or DOM). `localStorage`/`sessionStorage` inside the sandbox are transparently shimmed with an in-memory store so code that uses them runs without SecurityErrors.
+- **postMessage source check** — only messages from the preview / fullscreen iframe windows are accepted.
 
 ### Console
 - Intercepts `console.log/warn/error/info` from the iframe via `postMessage`
 - Catches `window.onerror` and `unhandledrejection`
-- 200-line rolling buffer — no DOM flooding with AutoRun
+- 200-line rolling buffer — no DOM flooding under AutoRun
 - **Clear** button
 
 ### AI Code Analysis
 - Click **🔍 Analyse** to send the current code to the Claude API
-- Returns a structured list of issues with line numbers, severity (error / warning / info), message, and fix suggestion
-- Issues appear in the **Analyse tab** — click any entry to jump to that line
-- Gutter markers highlight affected line numbers in red / yellow / blue
-- Markers clear automatically when you edit the code (results are stale)
-- Works without configuration when used via [Claude.ai](https://claude.ai); for standalone use, enter your [Anthropic API key](https://console.anthropic.com) on first use (stored in `localStorage`, never transmitted anywhere else)
+- Returns a structured list of issues with line numbers, severity (error / warning / info), message, and a fix suggestion
+- Issues appear in the **Analyse tab** — click any entry (or focus it and press Enter) to jump to that line
+- Gutter markers highlight affected lines in red / yellow / blue and clear automatically when you edit the code (results are then stale)
+- **Requires an Anthropic API key.** You're prompted for it on first use; it is stored only in this browser's `localStorage` (`forge_api_key`) on this device and is sent only to `api.anthropic.com`, only when you click Analyse. It never reaches the preview iframe, the console, or anywhere else. The API responses are treated as untrusted input (severity is whitelisted, line numbers are coerced to integers, text is escaped).
+
+### Accessibility (v4.0)
+- **WCAG AA contrast** across UI text (gutter, panel headers, tabs, labels, diagnostics)
+- **Visible keyboard focus** (`:focus-visible`) on buttons, tabs, diagnostics, and the resize handle
+- **Accessible dialogs** — the API-key and confirm modals move focus into the dialog, trap Tab within it, close on Escape or backdrop click, and restore focus to the control that opened them
+- **Keyboard-operable** diagnostics (`role="button"`, Enter/Space) and resize handle (arrow keys, Shift for larger steps)
+- **Announced status** — toasts use `role="status"` / `aria-live`
 
 ### Layout & UX
-- **Split / vertical** layout toggle (⊞ button or swipe on panel headers)
-- **Resizable console** — drag the handle between editor and console
-- **Auto-save** to `localStorage` on every keystroke
-- **AutoRun state** persisted across reloads
+- **Split / vertical** layout toggle (⊞ button or swipe on panel headers), persisted
+- **Resizable console** — drag the handle between editor and console, or use the arrow keys
+- **Export** the current code as `.html` or `.js`
+- **JS → HTML** — wrap raw JavaScript in a complete HTML scaffold
+- **Auto-save** to `localStorage` (debounced)
+- **AutoRun, font size, and layout** persisted across reloads
 - Toast notifications for actions and errors
-- Responsive — works on mobile (keyboard shortcuts adapt)
+- Responsive — works on mobile
 
 ---
 
@@ -64,13 +78,13 @@ It was built to be the sandbox you'd actually want to use: fast, honest about wh
 
 **No installation. No build step.**
 
-1. Download [`forge_sandbox_final.html`](forge_sandbox_final.html)
+1. Download [`index.html`](index.html)
 2. Open it in any modern browser
 3. Start coding
 
-That's it.
+That's it. It also works straight from `file://` and offline — the loop guard's parser is bundled in, so nothing needs to load.
 
-For **AI code analysis** without a Claude.ai account, add your Anthropic API key when prompted (or pre-set it in `localStorage` under the key `forge_api_key`).
+For **AI code analysis**, add your [Anthropic API key](https://console.anthropic.com) when prompted (or pre-set it in `localStorage` under `forge_api_key`). Tip: use a key with a spending limit rather than your main key.
 
 ---
 
@@ -83,29 +97,36 @@ For **AI code analysis** without a Claude.ai account, add your Anthropic API key
 | Safari  | 16.4+   | ✅         | ✅           |
 | Edge    | 80+     | ✅         | ✅           |
 
+The editor uses the system monospace font (`Fragment Mono` / `Fira Code` if you happen to have them installed; no web font is fetched).
+
 ---
 
 ## Architecture Notes
 
-### Why a character-by-character tokenizer?
+### Why an AST-based loop guard
 
-Earlier versions used sequential regex passes. The problem: pass 2 runs on the output of pass 1, which already contains `<span>` tags. The string regex then matches `"hl-keyword"` inside `class="hl-keyword"`, and the attribute regex wraps `class=` in another span — producing broken, un-parseable HTML.
+The loop guard has to inject an iteration counter into every loop body without breaking valid code. An earlier regex-based approach mis-fired on real JavaScript — regex literals containing `for (`, braceless bodies that swallowed the next statement, nested loops with stale offsets. FORGE now parses the code with a vendored copy of the **Acorn** parser and instruments loop bodies against the real syntax tree, which retires that whole class of bugs. A regex instrumenter remains as a fallback and the console reports which one is active.
 
-The tokenizer processes the raw source left-to-right, character by character. Each state (comment, string, tag, tag-attrs, script block, etc.) consumes characters exclusively. No regex ever runs on transformed text. Result: clean, valid HTML output with no false matches.
+### Why the script boundaries come from the HTML parser
+
+Loop instrumentation only applies to inline `<script>` blocks. Finding those with a regex is unsafe: browsers close a script on `</script` followed by whitespace or a slash, and a naive `src` check trips over attributes like `data-src`. FORGE locates scripts with `DOMParser` and `querySelectorAll('script:not([src])')`, so the guard sees exactly what the browser will execute.
+
+### Why a character-by-character tokenizer (in a Worker)
+
+Sequential regex highlighting passes run pass 2 over the `<span>`-laden output of pass 1, producing broken, un-parseable HTML. The tokenizer instead processes the raw source left-to-right; each state (comment, string, tag, script block, …) consumes characters exclusively, so no regex ever runs on transformed text. It runs in a Web Worker to keep large files from blocking the UI, with a synchronous fallback when Workers aren't available.
 
 ### Why the loop guard lives in the parent
 
-The obvious approach — inject a Worker inside the iframe that detects a frozen thread — doesn't work. A blocked main thread can't process incoming `postMessage` events, so the Worker's "stop now" message sits in the queue until the loop finishes (i.e., never). The correct fix is to watch from outside: the parent thread monitors heartbeats sent by `requestAnimationFrame` inside the iframe. When they stop, the parent sets `preview.srcdoc = ''`, which terminates the iframe from the outside regardless of what the iframe thread is doing.
+Injecting a Worker inside the iframe to detect a frozen thread doesn't work: a blocked main thread can't process incoming `postMessage` events, so a "stop now" message sits in the queue until the loop finishes (i.e. never). The correct fix is to watch from outside — the parent monitors heartbeats sent by `requestAnimationFrame` inside the iframe and, when they stop, sets `srcdoc = ''`, terminating the iframe regardless of what its thread is doing.
 
-### Single file, zero dependencies
+### Single file, one vendored dependency
 
-FORGE has no `node_modules`, no bundler, no CDN calls (except the optional Google Fonts preconnect in the `<head>`). The entire application — HTML, CSS, JavaScript, syntax highlighter, loop guard, AI analysis — is one file you can inspect, fork, and audit completely.
+FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-party library — the Acorn parser — is vendored inline, so the entire application (HTML, CSS, JavaScript, highlighter, loop guard, AI analysis) is a single file you can inspect, fork, and audit completely, and it runs with no network access at all until you ask it to analyse your code.
 
 ---
 
 ## Roadmap
 
-- [ ] Export code as `.html` / `.js` file
 - [ ] Light theme
 - [ ] Multiple editor tabs
 - [ ] CodeBERT or similar model as a fast first-pass pre-screener before Claude analysis (pending a fine-tuned model with region-level defect detection)
