@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>FORGE Self-Test</title>
+<style>
+  body { font-family: ui-monospace, monospace; background:#0f141c; color:#e3e8f0; padding:1.2rem; }
+  h1 { color:#00e676; margin-bottom:.4rem; font-size:1.2rem; }
+  .hint { font-size:11px; color:#4b5a72; margin-bottom:1rem; }
+  button {
+    display:block; margin:.35rem 0; padding:.45rem .9rem;
+    background:#1e2733; color:#e3e8f0; border:1px solid #252d3a;
+    border-radius:4px; font-family:inherit; cursor:pointer; font-size:12px;
+  }
+  button:hover { background:#2a3545; }
+  button.danger { border-color:#ff5370; color:#ff5370; }
+  #log { margin-top:1.2rem; white-space:pre-wrap; font-size:12px; line-height:1.6; }
+  .ok   { color:#00e676; }
+  .fail { color:#ff5370; }
+  .warn { color:#ffcb6b; }
+</style>
+</head>
+<body>
+  <h1>FORGE · Self-Test</h1>
+  <p class="hint">Buttons der Reihe nach klicken. Ausgabe erscheint hier und
+     im Konsole-Tab des Editors.</p>
+
+  <button onclick="t1_normalLoops()">1 · Normal-Loops (AST-Guard)</button>
+  <button onclick="t2_regexLiteral()">2 · Regex-Literal mit Klammern</button>
+  <button onclick="t3_forOfIn()">3 · for...of / for...in</button>
+  <button onclick="t4_console()">4 · console.log/warn/error/info</button>
+  <button onclick="t5_localStorage()">5 · localStorage-Fallback</button>
+  <button onclick="t6_uncaught()">6 · Uncaught Error</button>
+  <button onclick="t7_promiseReject()">7 · Promise-Rejection</button>
+  <button onclick="t8_throw()">8 · throw in try/catch</button>
+  <button class="danger" onclick="t9_infiniteLoop()">⚠ 9 · Endlosschleife (Loop-Guard)</button>
+  <button class="danger" onclick="t10_recursion()">⚠ 10 · Stack-Overflow (Rekursion)</button>
+
+  <div id="log"></div>
+
+  <script>
+    const log = (msg, cls) => {
+      const line = document.createElement('div');
+      line.className = cls || '';
+      line.textContent = msg;
+      document.getElementById('log').appendChild(line);
+      (cls === 'fail' ? console.error : cls === 'warn' ? console.warn : console.log)(msg);
+    };
+
+    // 1 ─ Klassische Schleifen dürfen vom AST-Guard nicht beschädigt werden
+    function t1_normalLoops() {
+      let sum = 0;
+      for (let i = 0; i < 100; i++) sum += i;
+      let w = 0;
+      while (w < 10) w++;
+      let d = 0;
+      do { d++; } while (d < 5);
+      const expected = 4950 + 10 + 5;
+      const actual = sum + w + d;
+      log(actual === expected
+        ? '✓ 1 · Normal-Loops: ' + actual
+        : '✗ 1 · Normal-Loops: erwartet ' + expected + ', bekam ' + actual,
+        actual === expected ? 'ok' : 'fail');
+    }
+
+    // 2 ─ Der alte Regex-Guard hätte hier möglicherweise zugeschlagen
+    function t2_regexLiteral() {
+      const re = /for\(/g;
+      const test = 'for(i=0;i<9;i++)';
+      const m = re.test(test);
+      log(m
+        ? '✓ 2a · /for\\(/g unangetastet'
+        : '✗ 2a · Regex-Literal wurde beschädigt',
+        m ? 'ok' : 'fail');
+
+      const re2 = /[a-z]+\(.*\)/;
+      const ok2 = re2.test('foo(bar)');
+      log(ok2
+        ? '✓ 2b · /[a-z]+\\(.*\\)/ funktioniert'
+        : '✗ 2b · Regex beschädigt',
+        ok2 ? 'ok' : 'fail');
+    }
+
+    // 3 ─ for-of und for-in sind erst seit dem letzten Patch im AST-Walker
+    function t3_forOfIn() {
+      let s1 = 0;
+      for (const n of [1, 2, 3]) s1 += n;
+      const obj = { a: 1, b: 2, c: 3 };
+      let s2 = 0;
+      for (const k in obj) s2 += obj[k];
+      log(s1 === 6 && s2 === 6
+        ? '✓ 3 · for...of (' + s1 + ') / for...in (' + s2 + ')'
+        : '✗ 3 · for...of/in: ' + s1 + ' / ' + s2,
+        s1 === 6 && s2 === 6 ? 'ok' : 'fail');
+    }
+
+    // 4 ─ Console-Bridge: alle vier Level + Objekt + Error-Instanz
+    function t4_console() {
+      console.log('→ 4 · log OK');
+      console.info('→ 4 · info OK');
+      console.warn('→ 4 · warn OK');
+      console.error('→ 4 · error OK');
+      console.log({ nested: { obj: true }, num: 42 });
+      console.log(new Error('synthetisch'));
+      log('✓ 4 · 6 Console-Aufrufe gesendet (siehe Konsole-Tab)');
+    }
+
+    // 5 ─ iframe hat kein allow-same-origin → localStorage wirft ohne Bridge
+    function t5_localStorage() {
+      try {
+        localStorage.setItem('forge_test', 'hello');
+        const v = localStorage.getItem('forge_test');
+        log(v === 'hello'
+          ? '✓ 5 · setItem/getItem: "' + v + '"'
+          : '✗ 5 · erwartet "hello", bekam "' + v + '"',
+          v === 'hello' ? 'ok' : 'fail');
+        log('  length=' + localStorage.length + ' key(0)=' + localStorage.key(0));
+      } catch (e) {
+        log('✗ 5 · localStorage wirft: ' + e.message, 'fail');
+      }
+    }
+
+    // 6 ─ window.onerror im Bridge sollte das fangen und weiterleiten
+    function t6_uncaught() {
+      log('→ 6 · uncaught Error in 50ms…');
+      setTimeout(() => { nonExistentFunctionXYZ(); }, 50);
+    }
+
+    // 7 ─ unhandledrejection-Handler im Bridge
+    function t7_promiseReject() {
+      log('→ 7 · Promise-Rejection ausgelöst…');
+      Promise.reject(new Error('synthetische Rejection'));
+    }
+
+    // 8 ─ Kontrollfall: gefangener Fehler darf NICHT im Bridge landen
+    function t8_throw() {
+      try {
+        throw new Error('synthetisch gefangen');
+      } catch (e) {
+        log('✓ 8 · try/catch: "' + e.message + '"', 'ok');
+      }
+    }
+
+    // 9 ─ Der AST-Guard wirft nach ~2000ms im Loop, die Seite bleibt am Leben.
+    //     Der Watchdog (4s) würde die Seite ersetzen, sollte aber gar nicht
+    //     zum Zug kommen, weil der Loop-Guard früher greift.
+    function t9_infiniteLoop() {
+      log('⚠ 9 · Endlosschleife gestartet – Loop-Guard sollte in ~2s werfen…', 'warn');
+      while (true) { /* absichtlich */ }
+    }
+
+    // 10 ─ Kein Loop → Loop-Guard greift nicht. Der Stack-Overflow wird
+    //      von try/catch gefangen. Interessant: kommt er sauber an?
+    function t10_recursion() {
+      log('→ 10 · Rekursion bis Stack-Overflow…');
+      function r(n) { return r(n + 1); }
+      try { r(0); }
+      catch (e) { log('✓ 10 · ' + e.name + ': ' + e.message, 'ok'); }
+    }
+
+    log('Self-Test geladen. Bereit.');
+  </script>
+</body>
+</html>
