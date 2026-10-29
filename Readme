@@ -127,6 +127,8 @@ FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-p
 
 - **Off-main-thread code isn't guarded.** The loop guard instruments inline scripts, and the watchdog watches the iframe's main thread. Code that runs elsewhere — a `Web Worker` or a nested iframe with its own infinite loop — won't trip either mechanism; it just burns CPU on its own thread until you re-run or close the preview, which tears the iframe (and its workers) down. This is a deliberate scope limit, not a hang: the page stays responsive.
 - **A single legitimate synchronous burst >6 s still trips the watchdog** if it isn't a loop (e.g. a giant synchronous computation with no `await`/animation-frame yield). Break long work across frames to avoid it.
+- **Code outside the static text of inline `<script>` blocks is only caught by the watchdog.** The AST guard instruments loops it can see in the script source. Loops in inline event-handler attributes (`onclick="while(1){}"`), in `eval()` / `new Function()` / string timers (`setTimeout("…")`), and in scripts inserted at runtime aren't instrumented. They are still stopped, but by the watchdog after about 6 s instead of by the loop guard after about 2 s. A loop inside a function defined in a `<script>` stays guarded even when an event handler calls it.
+- **The watchdog pauses while the tab is hidden.** An uninstrumented loop therefore keeps running in a background tab until the tab is visible again. Instrumented loops still stop, but only through the 50 M iteration cap, because the 2 s time limit is also disabled while the tab is hidden.
 
 ---
 
