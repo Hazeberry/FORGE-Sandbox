@@ -1,9 +1,24 @@
 https://hazeberry.github.io/FORGE-Sandbox/
 # FORGE · Code Sandbox
 
-> A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection, and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
+> A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection (including dynamically generated code), and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
 
-**Current version: v4.3**
+**Current version: v4.4** (visible in the toolbar and the page title)
+
+---
+
+## Changelog v4.4
+
+All findings from the v4.3 review round are addressed:
+
+- **Analysis tab** now opens reliably — it was invisible because the stylesheet's `display:none` reasserted itself; opening sets `display:block` explicitly.
+- **Dynamically generated infinite loops are now guarded.** `eval()`, `new Function()`, and string arguments to `setTimeout`/`setInterval` are instrumented by the preview bridge before they compile, so a `while(true){}` built at runtime throws after ~2 s instead of freezing the preview (and potentially the whole renderer process, which the watchdog could no longer rescue). See *Loop protection* below for the documented limits.
+- **Fullscreen preview no longer restarts your code.** The fullscreen mode enlarges the same preview iframe via CSS instead of moving the code into a second iframe — state, counters, and inputs survive entering and leaving fullscreen.
+- **Export type detection** no longer mislabels HTML fragments as `.js`: it checks for a document declaration, a leading tag, valid JavaScript (via Acorn), and typical HTML elements, in that order.
+- **Mobile: switchable views.** On screens ≤ 640 px a switcher (⊞ / E / V / K) shows only the editor, preview, or console at a time, giving each the full working height.
+- **Analysis without an API key** now performs a local Acorn syntax check of all executable script blocks (offline, with absolute line numbers in the gutter) instead of only opening the key dialog. The AI analysis remains available via the key dialog.
+- **Local version history** (🕘 button): up to 30 snapshots of your code, taken at most once per minute while editing, capped at ~300 kB total in `localStorage`. Restore any snapshot with one click; the current state is snapshotted before restoring.
+- **Visible version number** in the toolbar and `<title>`, so a stale deployment is recognizable at a glance.
 
 ---
 
@@ -30,17 +45,20 @@ It was built to be the sandbox you'd actually want to use: fast, honest about wh
 - **Undo-friendly edits** — auto-insertions integrate with the browser's native undo stack
 - **Find & navigate** with match count, Prev/Next buttons, Enter/Shift+Enter, Escape to close
 - **Go to line** — jump to any line number
+- **Local version history** — up to 30 automatic snapshots in `localStorage` (🕘 button), restorable with one click
 
 ### Preview & Safety
 - **Live auto-run** with a 900 ms debounce (toggleable)
 - **Ctrl+Enter** to run manually
-- **Infinite-loop protection** on two independent levels:
+- **Infinite-loop protection** on three independent levels:
   - *AST loop instrumentation* — the vendored Acorn parser walks the code and injects an iteration/time guard into **every** loop body (`while`, `for`, `do…while`, `for…in`, `for…of`, `for await`). The guard throws when a single synchronous tick runs longer than ~2 s or exceeds 50 M iterations (the per-tick counter resets each animation frame, so legitimate long-running animations are fine). If the parser is ever unavailable, a regex-based instrumenter takes over and the console says so.
+  - *Dynamic-code instrumentation* — the preview bridge also wraps `eval()`, `new Function()`, and string arguments to `setTimeout`/`setInterval`. Dynamically generated loops are instrumented **before** they compile, using the regex-based injector (string/comment aware). This closes the v4.3 gap where a runtime-generated `while(true){}` froze the preview before the watchdog could intervene.
   - *Parent-thread watchdog* — monitors iframe heartbeats every 200 ms; if the iframe thread stays frozen for more than 6 s, the parent kills it from outside (the only approach that works for an already-blocked thread).
   - *False-positive safe* — the watchdog pauses while the tab is hidden (`document.hidden`) and while a blocking dialog (`alert` / `confirm` / `prompt`) is open, so neither is mistaken for a frozen thread.
 - **Parser-based script instrumentation** — scripts are located with `DOMParser`, not a tag regex, so crafted end tags (`</script x>`) or innocent `src`-like attributes can't slip past the loop guard.
+- **Fullscreen without restart** — the same preview iframe is enlarged via CSS; entering/leaving fullscreen never re-executes your code, so state and inputs survive.
 - **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock allow-forms allow-downloads`, **no `allow-same-origin`** (the preview cannot reach the parent's storage or DOM). `localStorage`/`sessionStorage` inside the sandbox are transparently shimmed with an in-memory store so code that uses them runs without SecurityErrors.
-- **postMessage source check** — only messages from the preview / fullscreen iframe windows are accepted.
+- **postMessage source check** — only messages from the preview iframe window are accepted.
 
 ### Console
 - Intercepts `console.log/warn/error/info` from the iframe via `postMessage`
@@ -48,27 +66,30 @@ It was built to be the sandbox you'd actually want to use: fast, honest about wh
 - 200-line rolling buffer — no DOM flooding under AutoRun
 - **Clear** button
 
-### AI Code Analysis
-- Click **🔍 Analyse** to send the current code to the Claude API
-- Returns a structured list of issues with line numbers, severity (error / warning / info), message, and a fix suggestion
-- Issues appear in the **Analyse tab** — click any entry (or focus it and press Enter) to jump to that line
-- Gutter markers highlight affected lines in red / yellow / blue and clear automatically when you edit the code (results are then stale)
-- **Requires an Anthropic API key.** You're prompted for it on first use; it is stored only in this browser's `localStorage` (`forge_api_key`) on this device and is sent only to `api.anthropic.com`, only when you click Analyse. It never reaches the preview iframe, the console, or anywhere else. The API responses are treated as untrusted input (severity is whitelisted, line numbers are coerced to integers, text is escaped).
+### Code Analysis
+- **Without an API key:** click **🔍 Analyse** to run a **local Acorn syntax check** across all executable script blocks — offline, no network, with absolute line numbers and gutter markers. A hint offers the key dialog for the deeper AI analysis.
+- **With an Anthropic API key:** the current code is sent to the Claude API
+  - Returns a structured list of issues with line numbers, severity (error / warning / info), message, and a fix suggestion
+  - Issues appear in the **Analyse tab** — click any entry (or focus it and press Enter) to jump to that line
+  - Gutter markers highlight affected lines in red / yellow / blue and clear automatically when you edit the code (results are then stale)
+  - The key is stored only in this browser's `localStorage` (`forge_api_key`) on this device and is sent only to `api.anthropic.com`, only when you click Analyse. It never reaches the preview iframe, the console, or anywhere else. The API responses are treated as untrusted input (severity is whitelisted, line numbers are coerced to integers, text is escaped).
 
-### Accessibility (v4.0)
+### Accessibility
 - **WCAG AA contrast** across UI text (gutter, panel headers, tabs, labels, diagnostics)
 - **Visible keyboard focus** (`:focus-visible`) on buttons, tabs, diagnostics, and the resize handle
-- **Accessible dialogs** — the API-key and confirm modals move focus into the dialog, trap Tab within it, close on Escape or backdrop click, and restore focus to the control that opened them
+- **Accessible dialogs** — the API-key, confirm, and history modals move focus into the dialog, trap Tab within it, close on Escape or backdrop click, and restore focus to the control that opened them
 - **Keyboard-operable** diagnostics (`role="button"`, Enter/Space) and resize handle (arrow keys, Shift for larger steps)
 - **Announced status** — toasts use `role="status"` / `aria-live`
 
 ### Layout & UX
 - **Split / vertical** layout toggle (⊞ button or swipe on panel headers), persisted
+- **Mobile view switcher** — on screens ≤ 640 px, switch between Editor / Preview / Console as single full-height views (⊞ shows all)
 - **Resizable console** — drag the handle between editor and console, or use the arrow keys
-- **Export** the current code as `.html` or `.js`
+- **Export** the current code as `.html` or `.js` — the type is detected in stages (DOCTYPE/`<html>`, leading tag, valid-JS parse via Acorn, typical HTML elements), so HTML fragments no longer end up as `.js`
 - **JS → HTML** — wrap raw JavaScript in a complete HTML scaffold
-- **Auto-save** to `localStorage` (debounced)
+- **Auto-save** to `localStorage` (debounced) plus the snapshot history above
 - **AutoRun, font size, and layout** persisted across reloads
+- **Visible version badge** in the toolbar
 - Toast notifications for actions and errors
 - Responsive — works on mobile
 
@@ -105,7 +126,11 @@ The editor uses the system monospace font (`Fragment Mono` / `Fira Code` if you 
 
 ### Why an AST-based loop guard
 
-The loop guard has to inject an iteration counter into every loop body without breaking valid code. An earlier regex-based approach mis-fired on real JavaScript — regex literals containing `for (`, braceless bodies that swallowed the next statement, nested loops with stale offsets. FORGE now parses the code with a vendored copy of the **Acorn** parser and instruments loop bodies against the real syntax tree, which retires that whole class of bugs. A regex instrumenter remains as a fallback and the console reports which one is active.
+The loop guard has to inject an iteration counter into every loop body without breaking valid code. An earlier regex-based approach mis-fired on real JavaScript — regex literals containing `for (`, braceless bodies that swallowed the next statement, nested loops with stale offsets. FORGE now parses the code with a vendored copy of the **Acorn** parser and instruments loop bodies against the real syntax tree, which retires that whole class of bugs. A regex instrumenter remains as a fallback — and as the engine for dynamically generated code — and the console reports which one is active.
+
+### Why dynamically generated code is instrumented at the source
+
+A runtime `eval('while(true){}')` is invisible to the AST guard (it is a string at parse time) and can freeze the iframe thread so thoroughly that the shared renderer process starves the parent — exactly the situation the v4.3 review observed, where even the watchdog could no longer fire. Since v4.4 the preview bridge therefore wraps `eval`, `Function`, and the string-timer functions and runs their input through the string/comment-aware regex injector **before** the browser compiles it. The guard throws after ~2 s, before the thread ever blocks. This changes one semantic: wrapped `eval` executes in global scope like indirect eval, so a direct eval's access to local variables is not preserved (documented under *Known limits*).
 
 ### Why the script boundaries come from the HTML parser
 
@@ -117,18 +142,26 @@ Sequential regex highlighting passes run pass 2 over the `<span>`-laden output o
 
 ### Why the loop guard lives in the parent
 
-Injecting a Worker inside the iframe to detect a frozen thread doesn't work: a blocked main thread can't process incoming `postMessage` events, so a "stop now" message sits in the queue until the loop finishes (i.e. never). The correct fix is to watch from outside — the parent monitors heartbeats sent by `requestAnimationFrame` inside the iframe and, when they stop, sets `srcdoc = ''`, terminating the iframe regardless of what its thread is doing.
+Injecting a Worker inside the iframe to detect a frozen thread doesn't work: a blocked main thread can't process incoming `postMessage` events, so a "stop now" message sits in the queue until the loop finishes (i.e. never). The correct fix is to watch from outside — the parent monitors heartbeats sent by `requestAnimationFrame` inside the iframe and, when they stop, resets the iframe (`srcdoc`), terminating the preview regardless of what its thread is doing. **One honest limit:** if the preview thread is already fully blocked *and* the browser runs parent and iframe in the same renderer process, the parent's timers can be starved too, and no in-page watchdog can rescue the tab. That is precisely why v4.4 focuses on preventing the block (dynamic instrumentation) rather than curing it — prevention works in every process model; a cure only works when the watchdog's thread is still alive. If a preview ever freezes the tab anyway, close the tab or use the browser's task manager.
 
 ### Single file, one vendored dependency
 
-FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-party library — the Acorn parser — is vendored inline, so the entire application (HTML, CSS, JavaScript, highlighter, loop guard, AI analysis) is a single file you can inspect, fork, and audit completely, and it runs with no network access at all until you ask it to analyse your code.
+FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-party library — the Acorn parser — is vendored inline, so the entire application (HTML, CSS, JavaScript, highlighter, loop guard, analysis) is a single file you can inspect, fork, and audit completely, and it runs with no network access at all until you ask it to analyse your code.
 
-### Known limits
+### Deployment
 
-- **Off-main-thread code isn't guarded.** The loop guard instruments inline scripts, and the watchdog watches the iframe's main thread. Code that runs elsewhere — a `Web Worker` or a nested iframe with its own infinite loop — won't trip either mechanism; it just burns CPU on its own thread until you re-run or close the preview, which tears the iframe (and its workers) down. This is a deliberate scope limit, not a hang: the page stays responsive.
-- **A single legitimate synchronous burst >6 s still trips the watchdog** if it isn't a loop (e.g. a giant synchronous computation with no `await`/animation-frame yield). Break long work across frames to avoid it.
-- **Code outside the static text of inline `<script>` blocks is only caught by the watchdog.** The AST guard instruments loops it can see in the script source. Loops in inline event-handler attributes (`onclick="while(1){}"`), in `eval()` / `new Function()` / string timers (`setTimeout("…")`), and in scripts inserted at runtime aren't instrumented. They are still stopped, but by the watchdog after about 6 s instead of by the loop guard after about 2 s. A loop inside a function defined in a `<script>` stays guarded even when an event handler calls it.
+The site is served via **GitHub Pages** from this repository. The version number is visible in the toolbar badge and the page title, so you can immediately tell whether Pages is serving the latest build. If the badge and the [releases](https://github.com/Hazeberry/FORGE-Sandbox/commits/main) disagree, check *Settings → Pages* — the source must be the `main` branch.
+
+### Known limits of the loop protection
+
+These are deliberate scope limits, documented openly rather than hidden:
+
+- **Off-main-thread code isn't guarded.** The loop guard instruments inline scripts and the dynamic sources named above; the watchdog watches the iframe's main thread. Code that runs elsewhere — a `Web Worker` or a nested iframe with its own infinite loop — won't trip either mechanism; it just burns CPU on its own thread until you re-run or close the preview, which tears the iframe (and its workers) down. The page itself stays responsive.
+- **Inline event-handler attributes and runtime-inserted scripts are only caught by the watchdog.** Loops inside `onclick="…"` attributes or scripts appended via `document.createElement('script')` are not instrumented (they don't pass through the wrapped `eval`/`Function`/timer sources). They are stopped by the watchdog after ~6 s. A loop inside a function defined in a `<script>` stays guarded even when an event handler calls it.
+- **Wrapped `eval` loses direct-eval scope.** The bridge replaces `window.eval` to instrument dynamic code; the replacement evaluates in global scope (like indirect eval). Code that relies on `eval` seeing local variables of the calling function breaks. Avoid direct `eval` in the sandbox; use explicit global state instead.
+- **A single legitimate synchronous burst > 6 s still trips the watchdog** if it isn't a loop (e.g. a giant synchronous computation with no `await`/animation-frame yield). Break long work across frames to avoid it.
 - **The watchdog pauses while the tab is hidden.** An uninstrumented loop therefore keeps running in a background tab until the tab is visible again. Instrumented loops still stop, but only through the 50 M iteration cap, because the 2 s time limit is also disabled while the tab is hidden.
+- **If the tab ever freezes completely** despite all guards (see *Why the loop guard lives in the parent*), no in-page mechanism can recover it — close the tab. This is the fundamental limit of any same-process watchdog; the guards exist to make sure it practically never comes to that.
 
 ---
 

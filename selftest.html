@@ -23,7 +23,9 @@
 <body>
   <h1>FORGE · Self-Test</h1>
   <p class="hint">Buttons der Reihe nach klicken. Ausgabe erscheint hier und
-     im Konsole-Tab des Editors.</p>
+     im Konsole-Tab des Editors. Test 11–13 prüfen den dynamischen Guard
+     (eval / new Function), der seit v4.4 Endlosschleifen in zur Laufzeit
+     erzeugtem Code instrumentiert.</p>
 
   <button onclick="t1_normalLoops()">1 · Normal-Loops (AST-Guard)</button>
   <button onclick="t2_regexLiteral()">2 · Regex-Literal mit Klammern</button>
@@ -35,6 +37,9 @@
   <button onclick="t8_throw()">8 · throw in try/catch</button>
   <button class="danger" onclick="t9_infiniteLoop()">⚠ 9 · Endlosschleife (Loop-Guard)</button>
   <button class="danger" onclick="t10_recursion()">⚠ 10 · Stack-Overflow (Rekursion)</button>
+  <button class="danger" onclick="t11_dynamicEval()">⚠ 11 · Endlosschleife via eval (dynamischer Guard)</button>
+  <button class="danger" onclick="t12_dynamicFunction()">⚠ 12 · Endlosschleife via new Function (dynamischer Guard)</button>
+  <button class="danger" onclick="t13_timerString()">⚠ 13 · Endlosschleife via setTimeout-String (dynamischer Guard)</button>
 
   <div id="log"></div>
 
@@ -158,7 +163,28 @@
       catch (e) { log('✓ 10 · ' + e.name + ': ' + e.message, 'ok'); }
     }
 
-    log('Self-Test geladen. Bereit.');
+    // 11 ─ Dynamisch erzeugter Code: Seit v4.4 instrumentiert die Bridge
+    //      auch eval(). Der Guard sollte nach ~2s werfen, die Seite bleibt
+    //      am Leben und der Watchdog muss nicht eingreifen.
+    function t11_dynamicEval() {
+      log('⚠ 11 · eval-Endlosschleife gestartet – dynamischer Guard sollte in ~2s werfen…', 'warn');
+      eval('while(true){}');
+    }
+
+    // 12 ─ new Function(...) wird ebenfalls instrumentiert.
+    function t12_dynamicFunction() {
+      log('⚠ 12 · new Function-Endlosschleife gestartet – dynamischer Guard sollte in ~2s werfen…', 'warn');
+      (new Function('while(true){}'))();
+    }
+
+    // 13 ─ setTimeout mit String-Argument: der String wird instrumentiert,
+    //      bevor der Timer ihn kompiliert.
+    function t13_timerString() {
+      log('⚠ 13 · setTimeout-String-Endlosschleife gestartet – dynamischer Guard sollte in ~2s werfen…', 'warn');
+      setTimeout('while(true){}', 10);
+    }
+
+    log('Self-Test geladen (v4.4). Bereit.');
   </script>
 </body>
 </html>
