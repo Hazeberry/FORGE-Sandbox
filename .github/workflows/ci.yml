@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Keine Install-Skripte der Abhängigkeiten ausführen; der Build braucht sie nicht.
+      - run: npm ci --ignore-scripts
+
+      - name: Neu bauen
+        run: npm run build
+
+      - name: index.html muss dem Build und SHA256.txt entsprechen
+        run: |
+          cmp dist/FORGE-5.html index.html
+          expected=$(cut -d' ' -f1 SHA256.txt)
+          actual=$(sha256sum index.html | cut -d' ' -f1)
+          echo "erwartet: $expected"
+          echo "tatsächlich: $actual"
+          test "$expected" = "$actual"
+
+      - name: Chromium installieren
+        run: npx playwright install --with-deps chromium
+
+      - name: Funktions- und Isolationstests (21 Prüfungen)
+        run: npm test
+
+      - name: Ergänzende Sicherheitsbeobachtungen
+        run: npm run test:security
+
+      - name: Netzwerk-Grenzen (dichte Kanäle müssen dicht bleiben)
+        run: npm run test:limits
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ergebnisse
+          path: |
+            dist/FORGE-5.html
+            test-results.json
+            security-results.json
+            desktop.png
+          if-no-files-found: ignore
