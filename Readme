@@ -1,203 +1,83 @@
-https://hazeberry.github.io/FORGE-Sandbox/
-# FORGE · Code Sandbox
+# FORGE 5 – lokaler Code-Arbeitsraum
 
-> A single-file HTML/CSS/JS sandbox with live preview, syntax highlighting, AST-based loop protection (including dynamically generated code), and AI-powered code analysis. No build step, no CDN, no runtime network calls (except the AI analysis you explicitly trigger).
+Ein Editor mit Live-Vorschau für **eigenen** HTML-, CSS- und JavaScript-Code. Alles steckt in einer einzigen Datei (`index.html`, ca. 527 KB, CodeMirror 6 eingebettet). Es gibt keinen Server, keinen API-Key und kein CDN. Gespeichert wird nur im Browser.
 
-**Current version: v4.4** (visible in the toolbar and the page title)
+Live: https://hazeberry.github.io/FORGE-Sandbox/
 
----
+> **Kurz und ehrlich:** FORGE ist ein Arbeitsraum für Code, dem du vertraust. Es ist **keine** Sicherheitsumgebung für fremden oder bösartigen Code. Es gibt zwei bekannte Wege, auf denen Code aus der Vorschau trotz Sperren Daten ins Netz schicken kann (siehe „Bekannte Grenzen“). Wer unbekannten Code prüfen will, braucht eine VM oder einen eigenen Browser ohne Netzwerk.
 
-## Changelog v4.4
+## Betriebsarten
 
-All findings from the v4.3 review round are addressed:
+| Modus | Wofür | Was gesperrt ist | Was trotzdem möglich ist |
+|---|---|---|---|
+| **HTML ohne JavaScript** (Standard) | HTML/CSS ansehen | Skripte, Event-Handler, Formulare, Popups | `<link rel="prerender">` löst einen Netzwerk-Request aus |
+| **JavaScript im Worker** | Berechnungen, Konsolentests | DOM, Speicher, Netzwerk (fetch, XHR, WebSocket, WebRTC) | Rechenlast; nach 5 s wird der Lauf beendet |
+| **HTML + JavaScript** | eigene interaktive Seiten | externe Ressourcen, fetch, eval, Zugriff auf Editor und Speicher | WebRTC und `prerender` erreichen das Netz; eine Endlosschleife kann den Tab blockieren |
 
-- **Analysis tab** now opens reliably — it was invisible because the stylesheet's `display:none` reasserted itself; opening sets `display:block` explicitly.
-- **Dynamically generated infinite loops are now guarded.** `eval()`, `new Function()`, and string arguments to `setTimeout`/`setInterval` are instrumented by the preview bridge before they compile, so a `while(true){}` built at runtime throws after ~2 s instead of freezing the preview (and potentially the whole renderer process, which the watchdog could no longer rescue). See *Loop protection* below for the documented limits.
-- **Fullscreen preview no longer restarts your code.** The fullscreen mode enlarges the same preview iframe via CSS instead of moving the code into a second iframe — state, counters, and inputs survive entering and leaving fullscreen.
-- **Export type detection** no longer mislabels HTML fragments as `.js`: it checks for a document declaration, a leading tag, valid JavaScript (via Acorn), and typical HTML elements, in that order.
-- **Mobile: switchable views.** On screens ≤ 640 px a switcher (⊞ / E / V / K) shows only the editor, preview, or console at a time, giving each the full working height.
-- **Analysis without an API key** now performs a local Acorn syntax check of all executable script blocks (offline, with absolute line numbers in the gutter) instead of only opening the key dialog. The AI analysis remains available via the key dialog.
-- **Local version history** (🕘 button): up to 30 snapshots of your code, taken at most once per minute while editing, capped at ~300 kB total in `localStorage`. Restore any snapshot with one click; the current state is snapshotted before restoring.
-- **Visible version number** in the toolbar and `<title>`, so a stale deployment is recognizable at a glance.
+Es startet nie etwas automatisch, auch kein gespeicherter Code. Der DOM-Modus verlangt eine ausdrückliche Bestätigung. Ein Moduswechsel stoppt den laufenden Code.
 
----
+## Bekannte Grenzen
 
-## What is FORGE?
+Diese Punkte wurden am 01.11.2026 in Headless-Chromium 153.0.8010.12 nachgestellt.
 
-FORGE is a **self-contained code playground** — one HTML file you can open in any browser and start writing HTML, CSS, and JavaScript with instant live preview. There is nothing to install and no build step. The only third-party library, the [Acorn](https://github.com/acornjs/acorn) JavaScript parser, is **vendored inline** — so the file makes no CDN or network calls of its own; the sole outbound request is the AI analysis you trigger yourself.
+**Netzwerk**
+- **`<link rel="prerender">` umgeht die CSP.** Das betrifft den statischen Modus und den DOM-Modus. Im statischen Modus kann HTML beim Ansehen einen Request auslösen (z. B. die IP-Adresse verraten). Im DOM-Modus kann ein Skript Daten in die URL packen. Das Ziel bekam im Test den Request samt Parametern.
+- **WebRTC funktioniert im DOM-Modus.** Ein `RTCPeerConnection` mit STUN-Server sendet UDP-Pakete an einen frei wählbaren Host. Ob sich darüber Daten über den Hostnamen (DNS) ausleiten lassen, wurde nicht vorgeführt; es liegt nahe.
+- **Dicht waren in meinen Tests:** Bilder, Stylesheets, `@import`/`url()`/`@font-face`, iframes, Skripte, fetch, WebSocket, EventSource, dynamischer Import, externe Worker, `importScripts`, XHR im Worker, Formulare, `a[ping]`, Meta-Refresh, Navigation, `window.open`, video/audio/object/embed, preconnect, dns-prefetch, prefetch, preload, modulepreload und speculationrules. `sendBeacon` meldet „true“, es kam aber nichts an.
+- Die eingebauten Sicherheitstests prüfen nur HTTPS-Anfragen über Playwright-Routing und haben keine Pass/Fail-Bedingung. Die beiden Kanäle oben werden dort nicht getestet.
 
-It was built to be the sandbox you'd actually want to use: fast, honest about what it does, and secure by default.
+**Stabilität**
+- Der DOM-Modus läuft im selben Prozess wie der Editor. Eine Endlosschleife kann den ganzen Tab blockieren, und „Stop“ greift dann nicht.
+- Der Worker hat ein festes Zeitlimit von 5 Sekunden (Wanduhr), aber keine Speicherobergrenze. Das Limit beendet auch Skripte mit längeren Timern.
+- Die Konsole ist vom Nutzercode beeinflussbar und kein Prüfprotokoll. Die Ausgabe ist auf 50 Nachrichten pro Sekunde, 4.000 Zeichen pro Nachricht und 200 sichtbare Zeilen begrenzt.
 
----
+**Konsole (Funktionsmängel)**
+- `console.log(new Error("x"))` zeigt `{}`. Dasselbe gilt für Map und Set. `undefined` erscheint als leerer Text, BigInt als „[Nicht serialisierbar]“.
+- `console.table`, `console.dir`, `console.debug` und `console.assert` werden nicht angezeigt.
+- Im Worker-Modus bleiben `Promise.reject(...)` und Fehler in `async`-Funktionen ohne Ausgabe. Im DOM-Modus werden sie angezeigt.
 
-## Features
+**Speicher**
+- Dokument und Verlauf liegen unverschlüsselt in `localStorage` (Schlüssel `forge5-document`, `forge5-history`): bis 1 Mio. Zeichen pro Dokument, bis 20 Schnappschüsse, insgesamt ca. 3 Mio. Zeichen.
+- **Auf GitHub Pages teilt sich FORGE die Origin `hazeberry.github.io` mit allen anderen Seiten desselben Kontos.** Diese Seiten können den gespeicherten Code lesen. Bei eigener (Sub-)Domain wäre das getrennt.
+- Bei voller Browserablage erscheint eine Fehlermeldung. Der Export ist die zusätzliche Sicherung.
 
-### Editor
-- **Syntax highlighting** via a character-by-character tokenizer that runs in a **Web Worker** (with a synchronous fallback) — no regex on already-transformed text, no broken nested spans, no main-thread jank on large files
-- **Line numbers** with color-coded gutter markers for code-analysis results
-- **Auto-indent** on Enter, detecting opening brackets
-- **Smart brackets & quotes** — auto-close `{}`, `[]`, `()`, `""`, `''`, `` `` `` with cursor placement; skip over existing closing characters; wrap selections
-- **Multi-line Tab / Shift+Tab** indentation
-- **Ctrl+/** to toggle line comments
-- **Ctrl+=/ Ctrl+- / Ctrl+0** to zoom the editor font (persisted)
-- **Ctrl+M** to toggle Tab between indentation and browser navigation
-- **HTML tag autocomplete** — type `</` to auto-close the last open tag
-- **Undo-friendly edits** — auto-insertions integrate with the browser's native undo stack
-- **Find & navigate** with match count, Prev/Next buttons, Enter/Shift+Enter, Escape to close
-- **Go to line** — jump to any line number
-- **Local version history** — up to 30 automatic snapshots in `localStorage` (🕘 button), restorable with one click
+**Hosting**
+- GitHub Pages erlaubt keine eigenen HTTP-Header. Die CSP steht deshalb im `<meta>`-Tag. `frame-ancestors` lässt sich so nicht setzen, die Seite kann daher von fremden Seiten eingebettet werden.
 
-### Preview & Safety
-- **Live auto-run** with a 900 ms debounce (toggleable)
-- **Ctrl+Enter** to run manually
-- **Infinite-loop protection** on three independent levels:
-  - *AST loop instrumentation* — the vendored Acorn parser walks the code and injects an iteration/time guard into **every** loop body (`while`, `for`, `do…while`, `for…in`, `for…of`, `for await`). The guard throws when a single synchronous tick runs longer than ~2 s or exceeds 50 M iterations (the per-tick counter resets each animation frame, so legitimate long-running animations are fine). If the parser is ever unavailable, a regex-based instrumenter takes over and the console says so.
-  - *Dynamic-code instrumentation* — the preview bridge also wraps `eval()`, `new Function()`, and string arguments to `setTimeout`/`setInterval`. Dynamically generated loops are instrumented **before** they compile, using the regex-based injector (string/comment aware). This closes the v4.3 gap where a runtime-generated `while(true){}` froze the preview before the watchdog could intervene.
-  - *Parent-thread watchdog* — monitors iframe heartbeats every 200 ms; if the iframe thread stays frozen for more than 6 s, the parent kills it from outside (the only approach that works for an already-blocked thread).
-  - *False-positive safe* — the watchdog pauses while the tab is hidden (`document.hidden`) and while a blocking dialog (`alert` / `confirm` / `prompt`) is open, so neither is mistaken for a frozen thread.
-- **Parser-based script instrumentation** — scripts are located with `DOMParser`, not a tag regex, so crafted end tags (`</script x>`) or innocent `src`-like attributes can't slip past the loop guard.
-- **Fullscreen without restart** — the same preview iframe is enlarged via CSS; entering/leaving fullscreen never re-executes your code, so state and inputs survive.
-- **iframe sandboxed** — `allow-scripts allow-modals allow-pointer-lock allow-forms allow-downloads`, **no `allow-same-origin`** (the preview cannot reach the parent's storage or DOM). `localStorage`/`sessionStorage` inside the sandbox are transparently shimmed with an in-memory store so code that uses them runs without SecurityErrors.
-- **postMessage source check** — only messages from the preview iframe window are accepted.
+**Was nicht getestet wurde:** Firefox, Safari, echte Mobilgeräte, andere Chromium-Versionen, GPU-/Speicherlast.
 
-### Console
-- Intercepts `console.log/warn/error/info` from the iframe via `postMessage`
-- Catches `window.onerror` and `unhandledrejection`
-- 200-line rolling buffer — no DOM flooding under AutoRun
-- **Clear** button
+## Empfehlung nach Risiko
 
-### Code Analysis
-- **Without an API key:** click **🔍 Analyse** to run a **local Acorn syntax check** across all executable script blocks — offline, no network, with absolute line numbers and gutter markers. A hint offers the key dialog for the deeper AI analysis.
-- **With an Anthropic API key:** the current code is sent to the Claude API
-  - Returns a structured list of issues with line numbers, severity (error / warning / info), message, and a fix suggestion
-  - Issues appear in the **Analyse tab** — click any entry (or focus it and press Enter) to jump to that line
-  - Gutter markers highlight affected lines in red / yellow / blue and clear automatically when you edit the code (results are then stale)
-  - The key is stored only in this browser's `localStorage` (`forge_api_key`) on this device and is sent only to `api.anthropic.com`, only when you click Analyse. It never reaches the preview iframe, the console, or anywhere else. The API responses are treated as untrusted input (severity is whitelisted, line numbers are coerced to integers, text is escaped).
+| Situation | Empfehlung |
+|---|---|
+| Eigener Code, eigene Seiten | Alle Modi sind in Ordnung. |
+| Fremder Code ohne DOM | Nur der Worker-Modus. |
+| Fremdes HTML ansehen | Besser in einem separaten Browser ohne Netz; der statische Modus kann über `prerender` einen Request auslösen. |
+| Fremdes HTML mit JavaScript, Schadcode, vertrauliche Daten | **Nicht in FORGE.** VM oder isolierter Browser ohne Netzwerk verwenden. |
 
-### Accessibility
-- **WCAG AA contrast** across UI text (gutter, panel headers, tabs, labels, diagnostics)
-- **Visible keyboard focus** (`:focus-visible`) on buttons, tabs, diagnostics, and the resize handle
-- **Accessible dialogs** — the API-key, confirm, and history modals move focus into the dialog, trap Tab within it, close on Escape or backdrop click, and restore focus to the control that opened them
-- **Keyboard-operable** diagnostics (`role="button"`, Enter/Space) and resize handle (arrow keys, Shift for larger steps)
-- **Announced status** — toasts use `role="status"` / `aria-live`
+Keine Zugangsdaten, Schlüssel oder vertraulichen Inhalte in den Editor einfügen, wenn du unsicher bist, welcher Code später läuft.
 
-### Layout & UX
-- **Split / vertical** layout toggle (⊞ button or swipe on panel headers), persisted
-- **Mobile view switcher** — on screens ≤ 640 px, switch between Editor / Preview / Console as single full-height views (⊞ shows all)
-- **Resizable console** — drag the handle between editor and console, or use the arrow keys
-- **Export** the current code as `.html` or `.js` — the type is detected in stages (DOCTYPE/`<html>`, leading tag, valid-JS parse via Acorn, typical HTML elements), so HTML fragments no longer end up as `.js`
-- **JS → HTML** — wrap raw JavaScript in a complete HTML scaffold
-- **Auto-save** to `localStorage` (debounced) plus the snapshot history above
-- **AutoRun, font size, and layout** persisted across reloads
-- **Visible version badge** in the toolbar
-- Toast notifications for actions and errors
-- Responsive — works on mobile
+## Hinweis zu älteren Versionen
 
----
+FORGE 4.4 enthielt eine optionale KI-Analyse mit Anthropic-API-Key. Diese Funktion gibt es in FORGE 5 **nicht mehr**. Ein damals gespeicherter Key (`forge_api_key`) bleibt aber im Browser stehen, FORGE 5 liest und löscht ihn nicht. Wer ihn eingegeben hat, entfernt ihn über die Entwicklerwerkzeuge (Anwendung → Lokaler Speicher → `hazeberry.github.io`) oder erzeugt in der Anthropic-Konsole einen neuen Key und widerruft den alten. Dokumente aus älteren Versionen lassen sich über Export und „Öffnen“ übernehmen.
 
-## Quick Start
+## Editor
 
-**No installation. No build step.**
+CodeMirror 6, lokal gebündelt: Syntaxfarben, Zeilennummern, Faltung, Klammermarkierung, Einrückung, Undo/Redo, Suchen/Ersetzen (inkl. Regex). Strg/⌘+Enter startet, Strg/⌘+F sucht. Escape, dann Tab verlässt den Editor. Schriftgröße, Zeilenumbruch, Vollbild (gleiche Vorschau, gleicher Zustand), mobile Einzelansichten, Import/Export.
 
-1. Download [`index.html`](index.html)
-2. Open it in any modern browser
-3. Start coding
-
-That's it. It also works straight from `file://` and offline — the loop guard's parser is bundled in, so nothing needs to load.
-
-For **AI code analysis**, add your [Anthropic API key](https://console.anthropic.com) when prompted (or pre-set it in `localStorage` under `forge_api_key`). Tip: use a key with a spending limit rather than your main key.
-
----
-
-## Browser Support
-
-| Browser | Minimum | Loop Guard | Highlighting |
-|---------|---------|------------|--------------|
-| Chrome  | 80+     | ✅         | ✅           |
-| Firefox | 78+     | ✅         | ✅           |
-| Safari  | 16.4+   | ✅         | ✅           |
-| Edge    | 80+     | ✅         | ✅           |
-
-The editor uses the system monospace font (`Fragment Mono` / `Fira Code` if you happen to have them installed; no web font is fetched).
-
----
-
-## Architecture Notes
-
-### Why an AST-based loop guard
-
-The loop guard has to inject an iteration counter into every loop body without breaking valid code. An earlier regex-based approach mis-fired on real JavaScript — regex literals containing `for (`, braceless bodies that swallowed the next statement, nested loops with stale offsets. FORGE now parses the code with a vendored copy of the **Acorn** parser and instruments loop bodies against the real syntax tree, which retires that whole class of bugs. A regex instrumenter remains as a fallback — and as the engine for dynamically generated code — and the console reports which one is active.
-
-### Why dynamically generated code is instrumented at the source
-
-A runtime `eval('while(true){}')` is invisible to the AST guard (it is a string at parse time) and can freeze the iframe thread so thoroughly that the shared renderer process starves the parent — exactly the situation the v4.3 review observed, where even the watchdog could no longer fire. Since v4.4 the preview bridge therefore wraps `eval`, `Function`, and the string-timer functions and runs their input through the string/comment-aware regex injector **before** the browser compiles it. The guard throws after ~2 s, before the thread ever blocks. This changes one semantic: wrapped `eval` executes in global scope like indirect eval, so a direct eval's access to local variables is not preserved (documented under *Known limits*).
-
-### Why the script boundaries come from the HTML parser
-
-Loop instrumentation only applies to inline `<script>` blocks. Finding those with a regex is unsafe: browsers close a script on `</script` followed by whitespace or a slash, and a naive `src` check trips over attributes like `data-src`. FORGE locates scripts with `DOMParser` and `querySelectorAll('script:not([src])')`, so the guard sees exactly what the browser will execute.
-
-### Why a character-by-character tokenizer (in a Worker)
-
-Sequential regex highlighting passes run pass 2 over the `<span>`-laden output of pass 1, producing broken, un-parseable HTML. The tokenizer instead processes the raw source left-to-right; each state (comment, string, tag, script block, …) consumes characters exclusively, so no regex ever runs on transformed text. It runs in a Web Worker to keep large files from blocking the UI, with a synchronous fallback when Workers aren't available.
-
-### Why the loop guard lives in the parent
-
-Injecting a Worker inside the iframe to detect a frozen thread doesn't work: a blocked main thread can't process incoming `postMessage` events, so a "stop now" message sits in the queue until the loop finishes (i.e. never). The correct fix is to watch from outside — the parent monitors heartbeats sent by `requestAnimationFrame` inside the iframe and, when they stop, resets the iframe (`srcdoc`), terminating the preview regardless of what its thread is doing. **One honest limit:** if the preview thread is already fully blocked *and* the browser runs parent and iframe in the same renderer process, the parent's timers can be starved too, and no in-page watchdog can rescue the tab. That is precisely why v4.4 focuses on preventing the block (dynamic instrumentation) rather than curing it — prevention works in every process model; a cure only works when the watchdog's thread is still alive. If a preview ever freezes the tab anyway, close the tab or use the browser's task manager.
-
-### Single file, one vendored dependency
-
-FORGE has no `node_modules`, no bundler, and makes no CDN calls. Its one third-party library — the Acorn parser — is vendored inline, so the entire application (HTML, CSS, JavaScript, highlighter, loop guard, analysis) is a single file you can inspect, fork, and audit completely, and it runs with no network access at all until you ask it to analyse your code.
-
-### Deployment
-
-The site is served via **GitHub Pages** from this repository. The version number is visible in the toolbar badge and the page title, so you can immediately tell whether Pages is serving the latest build. If the badge and the [releases](https://github.com/Hazeberry/FORGE-Sandbox/commits/main) disagree, check *Settings → Pages* — the source must be the `main` branch.
-
-### Known limits of the loop protection
-
-These are deliberate scope limits, documented openly rather than hidden:
-
-- **Off-main-thread code isn't guarded.** The loop guard instruments inline scripts and the dynamic sources named above; the watchdog watches the iframe's main thread. Code that runs elsewhere — a `Web Worker` or a nested iframe with its own infinite loop — won't trip either mechanism; it just burns CPU on its own thread until you re-run or close the preview, which tears the iframe (and its workers) down. The page itself stays responsive.
-- **Inline event-handler attributes and runtime-inserted scripts are only caught by the watchdog.** Loops inside `onclick="…"` attributes or scripts appended via `document.createElement('script')` are not instrumented (they don't pass through the wrapped `eval`/`Function`/timer sources). They are stopped by the watchdog after ~6 s. A loop inside a function defined in a `<script>` stays guarded even when an event handler calls it.
-- **Wrapped `eval` loses direct-eval scope.** The bridge replaces `window.eval` to instrument dynamic code; the replacement evaluates in global scope (like indirect eval). Code that relies on `eval` seeing local variables of the calling function breaks. Avoid direct `eval` in the sandbox; use explicit global state instead.
-- **A single legitimate synchronous burst > 6 s still trips the watchdog** if it isn't a loop (e.g. a giant synchronous computation with no `await`/animation-frame yield). Break long work across frames to avoid it.
-- **The watchdog pauses while the tab is hidden.** An uninstrumented loop therefore keeps running in a background tab until the tab is visible again. Instrumented loops still stop, but only through the 50 M iteration cap, because the 2 s time limit is also disabled while the tab is hidden.
-- **If the tab ever freezes completely** despite all guards (see *Why the loop guard lives in the parent*), no in-page mechanism can recover it — close the tab. This is the fundamental limit of any same-process watchdog; the guards exist to make sure it practically never comes to that.
-
----
-
-## Roadmap
-
-- [ ] Light theme
-- [ ] Multiple editor tabs
-- [ ] CodeBERT or similar model as a fast first-pass pre-screener before Claude analysis (pending a fine-tuned model with region-level defect detection)
-
----
-
-## Development
-
-FORGE was built through close collaboration between a human and **Claude** (Anthropic). Architecture decisions, feature planning, and iterative code review were worked through together across many sessions. No code was accepted blindly — every version was analyzed, tested, and refined before inclusion.
-
-The human contribution: product vision, architectural direction, prioritization of what to fix and what to defer, final decisions on every tradeoff.
-
-The AI contribution: implementation, bug detection (including finding its own bugs across versions), and alternative approaches.
-
-This README acknowledges that process honestly. AI-assisted development is increasingly common; what matters is whether the result is correct, understandable, and maintainable. The extensive review history that produced this codebase is evidence of that process.
-
----
-
-## License
-
-MIT — do whatever you want with it.
+## Selbst bauen und prüfen
 
 ```
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the software, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+npm ci
+node build.mjs          # erzeugt dist/FORGE-5.html
 ```
+
+Die Datei `index.html` in diesem Repository ist byte-identisch mit dem Build. Das ließ sich am 01.11.2026 nachvollziehen:
+
+```
+SHA-256: 01511124f9dc250be1cc74ea093222eac7081a1b5713df93fb97c9e5bbf39087
+```
+
+Die Tests (`test.mjs`, `security-test.mjs`) erwarten Chromium unter einem festen Pfad. Der muss an die lokale Installation angepasst werden. Die 21 Prüfungen laufen durch (nachgeprüft mit Chrome 153.0.8010.12). Das ist kein Nachweis für andere Browser.
+
+Lizenzen der gebündelten Bibliotheken: `THIRD-PARTY-LICENSES.txt`. Projektlizenz: `LICENSE` (MIT).
