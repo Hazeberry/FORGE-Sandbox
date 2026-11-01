@@ -1,10 +1,12 @@
 {
   "name": "forge-next",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "FORGE 5 – lokaler Code-Arbeitsraum (Einzeldatei, CodeMirror 6)",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "node build.mjs",
+    "test": "node test.mjs",
+    "test:security": "node security-test.mjs",
+    "test:limits": "node known-limits.mjs"
   },
   "keywords": [],
   "author": "",

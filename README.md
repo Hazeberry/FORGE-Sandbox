@@ -24,7 +24,7 @@ Diese Punkte wurden am 01.11.2026 in Headless-Chromium 153.0.8010.12 nachgestell
 - **`<link rel="prerender">` umgeht die CSP.** Das betrifft den statischen Modus und den DOM-Modus. Im statischen Modus kann HTML beim Ansehen einen Request auslösen (z. B. die IP-Adresse verraten). Im DOM-Modus kann ein Skript Daten in die URL packen. Das Ziel bekam im Test den Request samt Parametern.
 - **WebRTC funktioniert im DOM-Modus.** Ein `RTCPeerConnection` mit STUN-Server sendet UDP-Pakete an einen frei wählbaren Host. Ob sich darüber Daten über den Hostnamen (DNS) ausleiten lassen, wurde nicht vorgeführt; es liegt nahe.
 - **Dicht waren in meinen Tests:** Bilder, Stylesheets, `@import`/`url()`/`@font-face`, iframes, Skripte, fetch, WebSocket, EventSource, dynamischer Import, externe Worker, `importScripts`, XHR im Worker, Formulare, `a[ping]`, Meta-Refresh, Navigation, `window.open`, video/audio/object/embed, preconnect, dns-prefetch, prefetch, preload, modulepreload und speculationrules. `sendBeacon` meldet „true“, es kam aber nichts an.
-- Die eingebauten Sicherheitstests prüfen nur HTTPS-Anfragen über Playwright-Routing und haben keine Pass/Fail-Bedingung. Die beiden Kanäle oben werden dort nicht getestet.
+- `security-test.mjs` beobachtet nur HTTPS-Anfragen über Playwright-Routing und hat keine Pass/Fail-Bedingung. Die Netzwerk-Grenzen prüft stattdessen `known-limits.mjs` gegen lokale HTTP- und UDP-Lauscher: Kanäle, die dicht sein müssen, lassen den Test bei einem Treffer fehlschlagen. Die oben genannten Lücken werden nur gemeldet.
 
 **Stabilität**
 - Der DOM-Modus läuft im selben Prozess wie der Editor. Eine Endlosschleife kann den ganzen Tab blockieren, und „Stop“ greift dann nicht.
@@ -68,16 +68,21 @@ CodeMirror 6, lokal gebündelt: Syntaxfarben, Zeilennummern, Faltung, Klammermar
 ## Selbst bauen und prüfen
 
 ```
-npm ci
-node build.mjs          # erzeugt dist/FORGE-5.html
+npm ci --ignore-scripts
+npm run build           # erzeugt dist/FORGE-5.html
+npm test                # 21 Funktions- und Isolationsprüfungen
+npm run test:security   # ergänzende Beobachtungen
+npm run test:limits     # Netzwerk-Grenzen, siehe oben
 ```
 
-Die Datei `index.html` in diesem Repository ist byte-identisch mit dem Build. Das ließ sich am 01.11.2026 nachvollziehen:
+`index.html` in diesem Repository ist byte-identisch mit dem Build. Der erwartete Hash steht in `SHA256.txt`:
 
 ```
-SHA-256: 01511124f9dc250be1cc74ea093222eac7081a1b5713df93fb97c9e5bbf39087
+SHA256: 01511124f9dc250be1cc74ea093222eac7081a1b5713df93fb97c9e5bbf39087
 ```
 
-Die Tests (`test.mjs`, `security-test.mjs`) erwarten Chromium unter einem festen Pfad. Der muss an die lokale Installation angepasst werden. Die 21 Prüfungen laufen durch (nachgeprüft mit Chrome 153.0.8010.12). Das ist kein Nachweis für andere Browser.
+Die Tests brauchen einen Chromium-Browser. Standardmäßig nutzt Playwright seinen eigenen (`npx playwright install chromium`); mit `CHROMIUM_PATH=/pfad/zu/chrome` lässt sich ein anderer angeben. Eine GitHub-Actions-Pipeline (`.github/workflows/ci.yml`) baut bei jedem Push und Pull Request neu, vergleicht den Hash und führt alle Tests aus. Die Tests laufen nur in Chromium; für andere Browser gibt es keinen Nachweis. Die mitgelieferten Ergebnisdateien (`test-results.json`, `security-results.json`) stammen von einem früheren Lauf in Chromium 153.0.8010.0 und sind keine Bürgschaft für den aktuellen Stand.
+
+`legacy/` enthält die Selbsttest-Seite der Version 4.4 (Loop-Guard). Sie passt nicht zu FORGE 5 und bleibt nur zur Dokumentation.
 
 Lizenzen der gebündelten Bibliotheken: `THIRD-PARTY-LICENSES.txt`. Projektlizenz: `LICENSE` (MIT).

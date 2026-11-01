@@ -1,6 +1,6 @@
 import {chromium} from 'playwright';import http from 'node:http';import fs from 'node:fs';
 const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(fs.readFileSync('dist/FORGE-5.html'))}).listen(0,'127.0.0.1');await new Promise(r=>server.on('listening',r));
-const browser=await chromium.launch({executablePath:'/tmp/forge-browser/chromium',headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--use-gl=angle','--use-angle=swiftshader'],env:{...process.env,LD_LIBRARY_PATH:'/tmp/forge-browser'}});const page=await browser.newPage({viewport:{width:1440,height:960}});const results=[];const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--use-gl=angle','--use-angle=swiftshader']});const page=await browser.newPage({viewport:{width:1440,height:960}});const results=[];const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const check=(name,value)=>{results.push({name,pass:!!value});if(!value)throw Error(name)};
 async function code(text){await page.locator('.cm-content').click();await page.keyboard.press('Control+a');await page.keyboard.insertText(text)}
 async function run(mode,text){await page.selectOption('#mode',mode);await code(text);await page.click('#clear');await page.click('#run');if(mode==='dom')await page.click('#consentYes');await page.waitForTimeout(350)}
