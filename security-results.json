@@ -1,0 +1,39 @@
+[
+  {
+    "name": "Resources and nested frame",
+    "requests": [],
+    "parentURL": "http://127.0.0.1:38453/"
+  },
+  {
+    "name": "Self navigation",
+    "requests": [],
+    "parentURL": "http://127.0.0.1:38453/"
+  },
+  {
+    "name": "Top navigation",
+    "requests": [],
+    "parentURL": "http://127.0.0.1:38453/"
+  },
+  {
+    "name": "Static meta refresh",
+    "requests": [],
+    "parentURL": "http://127.0.0.1:38453/"
+  },
+  {
+    "name": "Worker dynamic evaluation",
+    "logs": "Uncaught SecurityError: Failed to set a named property 'href' on 'Location': The current window does not have permission to navigate the target frame to 'https://example.com/top'.\neval blocked\nobject"
+  },
+  {
+    "name": "Untruncated 150k history",
+    "present": true
+  },
+  {
+    "name": "Restore dialog closed",
+    "closed": true,
+    "length": 150002
+  },
+  {
+    "name": "Standalone file launch",
+    "iframe": 1
+  }
+]
