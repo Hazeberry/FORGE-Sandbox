@@ -1,0 +1,55 @@
+import {EditorState,Compartment} from '@codemirror/state';
+import {EditorView,keymap,lineNumbers,highlightActiveLine,drawSelection,highlightSpecialChars} from '@codemirror/view';
+import {defaultKeymap,history,historyKeymap,indentWithTab,undo,redo} from '@codemirror/commands';
+import {html} from '@codemirror/lang-html';
+import {javascript} from '@codemirror/lang-javascript';
+import {searchKeymap,openSearchPanel,highlightSelectionMatches} from '@codemirror/search';
+import {syntaxHighlighting,defaultHighlightStyle,bracketMatching,foldGutter,indentOnInput} from '@codemirror/language';
+const $=id=>document.getElementById(id), KEY='forge5-document', HIST='forge5-history', MAX=1000000;
+const demo=`<!doctype html>\n<html lang="de">\n<style>\nbody { background: #101923; color: #e3edf7; font: 18px system-ui; padding: 3rem; }\nbutton { padding: .8rem 1.3rem; cursor: pointer; }\n</style>\n<h1>Hallo, FORGE.</h1>\n<p>Dein Code. Dein Arbeitsraum.</p>\n<button id="counter">0 Klicks</button>\n<script>\nlet count = 0;\ndocument.querySelector('#counter').onclick = event => {\n  event.target.textContent = ++count + ' Klicks';\n  console.log('Zähler:', count);\n};\n<\/script>\n</html>`;
+const get=k=>{try{return localStorage.getItem(k)}catch{return null}};
+const put=(k,v)=>{try{localStorage.setItem(k,v);return true}catch{return false}};
+let mode='static',frame=null,timer=null,saveTimer=null,runId='',messages=0,windowStart=0,fs=false,granted=false,lastSnapshot=0;
+const language=new Compartment(),wrap=new Compartment();
+const theme=EditorView.theme({'&':{height:'100%',fontSize:'14px',backgroundColor:'#101720',color:'#dce7f5'},'.cm-scroller':{overflow:'auto',fontFamily:'ui-monospace,monospace',lineHeight:'1.65'},'.cm-content':{caretColor:'#83ebbd'},'.cm-gutters':{backgroundColor:'#101720',color:'#8293a9',border:'none'},'.cm-activeLine':{backgroundColor:'#1d2937'},'.cm-activeLineGutter':{backgroundColor:'#1d2937'},'.cm-selectionBackground, &.cm-focused .cm-selectionBackground':{backgroundColor:'#31566c'},'.cm-cursor':{borderLeftColor:'#83ebbd'},'.cm-panels':{backgroundColor:'#202e3e',color:'#fff'}},{dark:true});
+const editor=new EditorView({parent:$('editor'),state:EditorState.create({doc:get(KEY)??demo,extensions:[lineNumbers(),history(),drawSelection(),highlightSpecialChars(),highlightActiveLine(),highlightSelectionMatches(),bracketMatching(),foldGutter(),indentOnInput(),syntaxHighlighting(defaultHighlightStyle),theme,language.of(html()),wrap.of([]),EditorView.contentAttributes.of({'aria-label':'Code-Editor',spellcheck:'false'}),keymap.of([{key:'Mod-Enter',run:()=>{run();return true}},...searchKeymap,...defaultKeymap,...historyKeymap,indentWithTab]),EditorView.updateListener.of(u=>{if(u.docChanged){clearTimeout(saveTimer);saveTimer=setTimeout(save,350);$('save').textContent='Ungespeichert'}if(u.docChanged||u.selectionSet)status()})]})});
+function status(){let p=editor.state.selection.main.head,l=editor.state.doc.lineAt(p);$('position').textContent=`Zeile ${l.number} · Spalte ${p-l.from+1} · ${editor.state.doc.length.toLocaleString('de-DE')} Zeichen`}
+function historyList(){try{const a=JSON.parse(get(HIST)||'[]');return Array.isArray(a)?a.filter(x=>typeof x.code==='string'&&Number.isFinite(x.t)):[]}catch{return []}}
+function snapshot(force=false){const code=editor.state.doc.toString();if(code.length>MAX)return false;const a=historyList();if(a.at(-1)?.code===code)return true;if(!force&&Date.now()-lastSnapshot<60000)return true;a.push({t:Date.now(),code});while(a.length>20||a.reduce((n,x)=>n+x.code.length,0)>3000000&&a.length>1)a.shift();if(!put(HIST,JSON.stringify(a)))return false;lastSnapshot=Date.now();return true}
+function save(){clearTimeout(saveTimer);const code=editor.state.doc.toString();const ok=code.length<=MAX&&put(KEY,code);$('save').textContent=ok?'Lokal gespeichert':'Speichern fehlgeschlagen – bitte exportieren';if(ok&&!snapshot())$('save').textContent='Code gespeichert; Verlauf voll'}
+function replace(code){editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:code}});editor.focus()}
+function log(level,msg){const row=document.createElement('div');row.className=level;row.textContent=String(msg).slice(0,4000);$('logs').append(row);while($('logs').children.length>200)$('logs').firstChild.remove();$('logs').scrollTop=$('logs').scrollHeight}
+function stop(note=true){clearTimeout(timer);timer=null;if(frame){frame.contentWindow?.postMessage({type:'stop',id:runId},'*');frame.remove();frame=null}runId='';$('state').textContent='Gestoppt';if(note)log('info','Ausführung beendet.');$('empty').hidden=false}
+function bridge(id,workerMode){
+  const send=parent.postMessage.bind(parent);let n=0,start=Date.now(),worker;
+  function emit(level,msg){if(Date.now()-start>1000){n=0;start=Date.now()}if(++n>50)return;send({type:'log',id,level,msg:String(msg).slice(0,4000)},'*')}
+  function report(args){return args.map(x=>{try{return typeof x==='string'?x:JSON.stringify(x)}catch{return '[Nicht serialisierbar]'}}).join(' ')}
+  if(workerMode){addEventListener('message',e=>{if(e.source!==parent||e.data?.id!==id)return;if(e.data.type==='stop'){worker?.terminate();return}if(e.data.type!=='start'||worker)return;
+    const pre='const __send=postMessage.bind(self);for(const level of ["log","info","warn","error"]){console[level]=(...args)=>{let msg;try{msg=args.map(x=>typeof x==="string"?x:JSON.stringify(x)).join(" ")}catch{msg="[Nicht serialisierbar]"}__send({level,msg:msg.slice(0,4000)})}};\n';
+    const url=URL.createObjectURL(new Blob([pre,e.data.code],{type:'text/javascript'}));
+    try{worker=new Worker(url);worker.onmessage=e=>{if(e.data&&typeof e.data.msg==='string')emit(e.data.level,e.data.msg)};worker.onerror=e=>emit('error',e.message)}catch(e){emit('error',e.message)}finally{URL.revokeObjectURL(url)}
+  });send({type:'ready',id},'*');
+  }else{for(const level of ['log','info','warn','error'])console[level]=(...args)=>emit(level,report(args));addEventListener('error',e=>emit('error',e.message));addEventListener('unhandledrejection',e=>emit('error',String(e.reason)))}
+}
+function run(){if(mode==='dom'&&!granted){$('consent').showModal();return}save();const code=editor.state.doc.toString();if(code.length>MAX){log('error','Maximal 1.000.000 Zeichen pro Lauf.');return}stop(false);runId=crypto.randomUUID();messages=0;windowStart=Date.now();const active=mode!=='static';frame=document.createElement('iframe');frame.id='preview';frame.title='Isolierte Vorschau';frame.setAttribute('sandbox',active?'allow-scripts':'');frame.setAttribute('referrerpolicy','no-referrer');frame.setAttribute('allow',"camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'");
+ const policy=`default-src 'none'; script-src ${active?"'unsafe-inline' blob:":"'none'"}; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src ${mode==='worker'?'blob:':"'none'"};`;
+ const prefix='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+policy+'">';
+ const script=active?'<script>('+bridge.toString()+')('+JSON.stringify(runId)+','+(mode==='worker')+');<'+ '/script>':'';
+ frame.srcdoc=prefix+script+(mode==='worker'?'<p style="font:16px system-ui;padding:24px">JavaScript läuft im Worker. Ausgabe unten in der Konsole.</p>':code);$('previewHost').append(frame);$('empty').hidden=true;$('state').textContent=mode==='static'?'HTML · Skripte gesperrt':mode==='worker'?'Worker · maximal 5 Sekunden':'DOM · eigene Inhalte';
+ if(mode==='worker'){const id=runId;timer=setTimeout(()=>{if(runId===id){stop(false);log('warn','Worker nach 5 Sekunden beendet (festes Laufzeitlimit).')}},5000)}
+}
+addEventListener('message',e=>{if(!frame||e.source!==frame.contentWindow||!e.data||e.data.id!==runId)return;const d=e.data;if(d.type==='ready'&&mode==='worker'){frame.contentWindow.postMessage({type:'start',id:runId,code:editor.state.doc.toString()},'*');return}if(d.type!=='log'||!['log','info','warn','error'].includes(d.level)||typeof d.msg!=='string')return;if(Date.now()-windowStart>1000){windowStart=Date.now();messages=0}if(++messages<=50)log(d.level,d.msg)});
+$('run').onclick=run;$('stop').onclick=()=>stop();$('clear').onclick=()=>$('logs').replaceChildren();$('search').onclick=()=>openSearchPanel(editor);$('undo').onclick=()=>undo(editor);$('redo').onclick=()=>redo(editor);
+$('mode').onchange=()=>{stop(false);mode=$('mode').value;granted=false;editor.dispatch({effects:language.reconfigure(mode==='worker'?javascript():html())});$('modeNote').textContent=mode==='static'?'HTML/CSS ansehen. JavaScript bleibt aus.':mode==='worker'?'Reines JavaScript, ohne DOM und dauerhaften Speicher. Abbruch nach 5 Sekunden.':'Für eigene HTML/JS-Seiten. Endlosschleifen können den Tab blockieren. Externe Ressourcen und eval sind gesperrt.'};
+$('consentYes').onclick=()=>{$('consent').close();granted=true;run()};$('consentNo').onclick=()=>$('consent').close();
+$('wrap').onchange=()=>editor.dispatch({effects:wrap.reconfigure($('wrap').checked?EditorView.lineWrapping:[])});
+$('font').onchange=()=>{$('editor').style.setProperty('--font',$('font').value+'px')};
+$('full').onclick=()=>{fs=!fs;document.body.classList.toggle('fullscreen',fs);$('full').textContent=fs?'Verkleinern':'Vollbild'};
+addEventListener('keydown',e=>{if(e.key==='Escape'&&fs)$('full').click()});
+$('export').onclick=()=>{const code=editor.state.doc.toString();const url=URL.createObjectURL(new Blob([code],{type:mode==='worker'?'text/javascript':'text/html'}));const a=document.createElement('a');a.href=url;a.download=mode==='worker'?'forge-code.js':'forge-code.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+$('import').onchange=async()=>{const f=$('import').files[0];if(!f)return;if(f.size>MAX*4){log('error','Datei zu groß.');return}const t=await f.text();if(t.length>MAX){log('error','Maximal 1.000.000 Zeichen.');return}if(!snapshot(true)){log('error','Vorheriger Stand konnte nicht gesichert werden. Bitte zuerst exportieren.');return}replace(t);$('import').value=''};
+$('history').onclick=()=>{const box=$('historyList');box.replaceChildren();for(const item of historyList().reverse()){const b=document.createElement('button');b.textContent=new Date(item.t).toLocaleString('de-DE')+' · '+item.code.length+' Zeichen';b.onclick=()=>{if(!snapshot(true)){log('error','Aktuellen Stand zuerst exportieren.');return}replace(item.code);$('historyDialog').close();save()};box.append(b)}if(!box.children.length)box.textContent='Noch keine Schnappschüsse.';$('historyDialog').showModal()};
+$('historyClose').onclick=()=>$('historyDialog').close();$('help').onclick=()=>$('helpDialog').showModal();$('helpClose').onclick=()=>$('helpDialog').close();
+$('view').onchange=()=>{document.body.dataset.view=$('view').value;editor.requestMeasure()};
+addEventListener('pagehide',save);status();$('modeNote').textContent='HTML/CSS ansehen. JavaScript bleibt aus.';
+// Kein automatischer Start gespeicherter Inhalte.
