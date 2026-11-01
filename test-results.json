@@ -1,0 +1,89 @@
+{
+  "chromium": "153.0.8010.0",
+  "results": [
+    {
+      "name": "No automatic execution",
+      "pass": true
+    },
+    {
+      "name": "Static scripts blocked",
+      "pass": true
+    },
+    {
+      "name": "Opaque origin blocks parent and storage",
+      "pass": true
+    },
+    {
+      "name": "CSP blocks eval and fetch",
+      "pass": true
+    },
+    {
+      "name": "Fullscreen keeps state",
+      "pass": true
+    },
+    {
+      "name": "Only one iframe",
+      "pass": true
+    },
+    {
+      "name": "Return keeps state",
+      "pass": true
+    },
+    {
+      "name": "Worker executes without DOM",
+      "pass": true
+    },
+    {
+      "name": "Worker opaque storage",
+      "pass": true
+    },
+    {
+      "name": "Worker network blocked",
+      "pass": true
+    },
+    {
+      "name": "Editor responsive during infinite worker",
+      "pass": true
+    },
+    {
+      "name": "Infinite worker removed by deadline",
+      "pass": true
+    },
+    {
+      "name": "Recovery after infinite worker",
+      "pass": true
+    },
+    {
+      "name": "Manual stop removes runner",
+      "pass": true
+    },
+    {
+      "name": "Saved code restored",
+      "pass": true
+    },
+    {
+      "name": "Reload resets execution mode",
+      "pass": true
+    },
+    {
+      "name": "Undo restores prior text",
+      "pass": true
+    },
+    {
+      "name": "Mobile editor-only view",
+      "pass": true
+    },
+    {
+      "name": "Mobile preview-only view",
+      "pass": true
+    },
+    {
+      "name": "Mobile no document overflow",
+      "pass": true
+    },
+    {
+      "name": "No app page errors",
+      "pass": true
+    }
+  ]
+}
